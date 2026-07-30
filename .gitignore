@@ -1,0 +1,10 @@
+target/
+out/
+bin/lib/
+*.class
+*.jar
+.bsp/
+.scala-build/
+.metals/
+.bloop/
+.DS_Store
