@@ -8,6 +8,18 @@ interactive **REPL chat**. Later: subagents as actors, and a Telegram front-end.
 Status: **P0 in progress.** This spec is written before the code and is the
 contract the code is reviewed against (`/spec-dev`).
 
+## 0. Two implementations, one spec
+
+nadia exists twice on purpose:
+
+| | Where | Role |
+|---|---|---|
+| **Rust** | `rozum:crates/nadia` | The executable reference. Shipped first because Rust already has the process and stdin primitives the tools need. |
+| **ScalaScript** | this repo | Dogfoods the language against `std.agent`; blocked on the two upstream gaps in `BACKLOG.md`. |
+
+Both implement *this* spec — same six tools, same safety model, same CLI surface.
+A divergence between them is a bug in one of them, and this file decides which.
+
 ## 1. Position in the stack
 
 nadia is a *thin app leaf*. It owns the domain — tools, prompts, UX, safety

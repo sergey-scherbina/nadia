@@ -47,12 +47,23 @@ Workaround: ```scala passthrough (`scala.io.StdIn.readLine`) on the JVM target.
 
 ## P0
 
+Status below is for the **ScalaScript** implementation. The Rust twin
+(`rozum:crates/nadia`) has NAD-3, NAD-4, NAD-5 and the budget/loop-breaker half
+of NAD-6 done and verified end-to-end on Qwen3.5-4B; port against it, and where
+the two disagree, `SPEC.md` decides.
+
 - NAD-3 — the six tools (`SPEC.md` §2) with the sandbox of §3.1–3.2.
+  Blocked on NAD-1 for `bash`; the other five are unblocked.
 - NAD-4 — batch CLI (`SPEC.md` §4.1), exit codes 0/1/2.
-- NAD-5 — REPL (`SPEC.md` §4.2), streaming, slash commands. Blocked on NAD-2.
+- NAD-5 — REPL (`SPEC.md` §4.2), slash commands. Blocked on NAD-2.
 - NAD-6 — approval gates (§3.3) and budgets/loop-breaker (§3.4–3.5).
-- NAD-7 — `rozum launch nadia` branch + first matrix row (`SPEC.md` §5).
-  Cross-repo: the launch branch is a rozum change.
+- NAD-7 — first matrix row (`SPEC.md` §5). **No launcher change needed**: the
+  Rust twin established that `rozum launch` already exports `OPENAI_BASE_URL`
+  and `ROZUM_GATEWAY_URL` to every agent it starts, so an agent that reads
+  those and normalizes the `/v1` suffix is wired by the existing contract.
+- NAD-10 — token streaming in the REPL (`SPEC.md` P1). `std.agent` has
+  `runAgentStream`; the Rust twin currently renders per turn, so this is the
+  one place ScalaScript is ahead.
 
 ## P2+
 
