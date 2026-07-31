@@ -70,38 +70,66 @@ Prefer the *file* wherever the platform can project one. Kubernetes and ECS can 
 secret to a container, but a file is not inherited by child processes — and this program
 starts `bash` on a model's say-so.
 
-### Hugging Face — the Hub's router
+### Hugging Face — where the model comes from
 
 ```bash
+# the repository this project's own local model comes from — no token, no account
+nadia --provider huggingface --model mlx-community/Qwen3.5-4B-MLX-4bit run "…"
+
+# a model somebody else is serving
 export HF_TOKEN=hf_…
 nadia --provider huggingface --model Qwen/Qwen3.5-4B-Instruct run "…"
 ```
 
-Resolves to `https://router.huggingface.co/v1/chat/completions`, the Hub's OpenAI-compatible
-endpoint, which picks a partner provider server-side. The selection policy is part of the
-model id (`:fastest`, `:cheapest`, `:preferred`, or a provider name such as `:groq`) and
-passes through untouched — it is the Hub's syntax, not ours to interpret.
+Both of those are "the model, from Hugging Face", and both work. They cannot be answered by
+the same machine, though, and **which one a repository is cannot be read off its id** — so
+nadia routes on it:
 
-This is the provider that closes the loop. The local model this project was built against —
-`mlx-community/Qwen3.5-4B-MLX-4bit` — came from the Hub in the first place, and the same
-catalogue is here when the machine in front of you cannot hold the model you want. Nothing
-else changes: same six tools, same prompts, same loop.
+| | | |
+|---|---|---|
+| weights to **download** | `mlx-community/…`, `…-GGUF` | → your gateway, which fetches the repository. No token. |
+| models to **call** | what a partner provider hosts | → `https://router.huggingface.co/v1`, with `HF_TOKEN`. |
 
-**One thing the Hub does not tell you from a model id.** It hosts two different kinds of
-repository under one namespace:
+Nobody serves MLX or GGUF builds behind an API — they are files — so for those the local
+runtime is not a fallback, it is the only place the request could ever be answered. And
+`local` is what rozum already is: it knows how to pull a repository from the Hub, so the id
+passes through untouched and the gateway resolves it.
 
-| | |
-|---|---|
-| weights to **download** | `mlx-community/…`, `…-GGUF`, `…-MLX-4bit` — for a runtime you run |
-| models to **call** | what a partner provider serves through the router |
+On the router path, the selection policy is part of the model id (`:fastest`, `:cheapest`,
+`:preferred`, or a provider name such as `:groq`) and passes through untouched too — it is
+the Hub's syntax, not ours to reinterpret.
 
-`mlx-community/Qwen3.5-4B-MLX-4bit` is the first kind, so the router cannot serve it, and
-asking returns model-not-found — which reads as *the Hub lost my model* rather than *wrong
-path for this repository*. nadia refuses it up front instead, and names both ways forward:
-pass the original repository (`Qwen/Qwen3.5-4B-Instruct`), or keep those weights and point
-`--provider local` at a gateway that has them resident. It does not guess an upstream name;
-`mlx-community` ids are not mechanically derivable from the original, and a guess would send
-you to a 404 of our own making.
+#### One model, several spellings
+
+rozum launches with `mlx-community:Qwen3.5-4B-MLX-4bit`; the Hub writes
+`mlx-community/Qwen3.5-4B-MLX-4bit`; `hf:org/repo` is a third form of the same thing. They
+must compare equal, and getting that wrong is expensive in both directions:
+
+- In **rozum**, the gateway compared the requested id against its resident one as a *string*.
+  The other spelling read as a second model, so it warmed a **second resident copy of weights
+  it already had** — double the RAM for one model, on a machine sized for one of them. Fixed
+  (`same_model` in `enter`), with the equivalence also applied to the warm-cache lookup.
+- In **nadia**, the same comparison decides whether to warn you.
+
+#### The warning, and why it is worth a round trip
+
+A rozum gateway asked for a model it does not have and cannot warm **does not refuse**. It
+answers with the model it does have, and the reply carries the requested id back — a wrong
+answer wearing the right label, and the one failure mode here that cannot be caught by
+reading the output. So when a specific repository is named, nadia asks the gateway what it
+has resident and says so:
+
+```
+nadia: warning — this gateway has `mlx-community:Qwen3.5-4B-MLX-4bit` resident, not
+  `mlx-community/Llama-3.3-70B-Instruct-4bit`. It will serve it only if those weights are
+  already downloaded; otherwise it answers with the resident model and labels the reply
+  with the one you asked for. To be sure, run a gateway on it:
+      rozum gateway --model mlx-community:Llama-3.3-70B-Instruct-4bit --port 8080
+```
+
+A warning and not a refusal, because a gateway legitimately serves a second cached model
+alongside its primary. `--model local` skips the check entirely — it means "whatever you have
+resident", so there is nothing to disagree with, and the benchmark harness pays nothing.
 
 ### AWS — Bedrock
 

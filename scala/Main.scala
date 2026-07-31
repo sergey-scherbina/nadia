@@ -111,6 +111,12 @@ object Main:
                 Console.err.println(s"nadia: $e")
                 2
               case Right(endpoint) =>
+                // Only when a specific repository was named: `local` means "whatever you have
+                // resident", so there is nothing to disagree with, and the benchmark harness —
+                // which always passes it — pays no round trip.
+                if Provider.servedLocally(o.provider, o.model) && o.model != "local" then
+                  Gateway.residentWarning(endpoint.baseUrl, endpoint.model)
+                    .foreach(w => Console.err.println(s"nadia: $w"))
                 val client = Gateway.client(endpoint)
                 val budget = Budget(maxSteps = o.maxSteps)
                 mode match

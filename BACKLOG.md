@@ -155,11 +155,13 @@ its Dockerfile belongs in that repository and not this one.
 
 ### NAD-14 — no live run against Hugging Face, Bedrock or Vertex
 
-The URL construction is unit-tested against each vendor's documented shape. The
-Hugging Face path goes further — a live request with a deliberately invalid token
-reaches the router and comes back 401, which pins the URL, the bearer header and
-the error reporting — but no account exists for any of the three, so no request
-has been answered with a completion. No manifest here has been applied to a real
+The URL construction is unit-tested against each vendor's documented shape. Two
+of the three Hugging Face paths are now real: a weights repository
+(`mlx-community/Qwen3.5-4B-MLX-4bit`) runs a task end-to-end through a local
+gateway, and a router request with a deliberately invalid token comes back 401,
+pinning the URL, the bearer header and the error reporting. What is still
+unproven is a *completion* from a hosted provider — no account exists for any of
+the three. No manifest here has been applied to a real
 cluster. `docs/deployment.md` says so in the same words; do
 not let this line disappear before a real run replaces it.
 

@@ -53,6 +53,38 @@ class SandboxSuite extends munit.FunSuite:
     assertEquals(r.stdout.length, 200000)
   }
 
+class GatewaySuite extends munit.FunSuite:
+
+  test("one model, several spellings") {
+    // rozum launches with `org:repo`; the Hub writes `org/repo`; both name one set of
+    // weights. Comparing them as strings is the defect this mirrors from the gateway's own
+    // warm cache, where it warmed a second resident copy of the model already loaded.
+    assert(Gateway.sameModel("mlx-community:Qwen3.5-4B-MLX-4bit", "mlx-community/Qwen3.5-4B-MLX-4bit"))
+    assert(Gateway.sameModel("hf:org/model", "org/model"))
+    assert(Gateway.sameModel("org/Model", "org/model"), "repository names compare case-insensitively")
+    assert(Gateway.sameModel("local", "local"))
+
+    assert(!Gateway.sameModel("mlx-community/A", "mlx-community/B"))
+    assert(!Gateway.sameModel("local", "mlx-community/A"))
+    // Not every spec is an HF repository, and those must not be coerced into one.
+    assert(!Gateway.sameModel("ollama:qwen3:8b", "ollama/qwen3:8b"))
+    assert(!Gateway.sameModel("/abs/path/model", "abs/path"))
+  }
+
+  test("the launch command a warning suggests is a spec rozum accepts") {
+    assertEquals(Gateway.rozumSpec("mlx-community/Qwen3.5-4B-MLX-4bit"), "mlx-community:Qwen3.5-4B-MLX-4bit")
+    assertEquals(Gateway.rozumSpec("mlx-community:Qwen3.5-4B-MLX-4bit"), "mlx-community:Qwen3.5-4B-MLX-4bit")
+    // Nothing to convert, and nothing invented.
+    assertEquals(Gateway.rozumSpec("local"), "local")
+  }
+
+  test("an unreachable gateway produces no warning, only a failed request") {
+    // The check is an aid, not a gate: a gateway that cannot be probed must not stop a run,
+    // because the request itself reports that far better a moment later.
+    assertEquals(Gateway.residentModel("http://127.0.0.1:1"), None)
+    assertEquals(Gateway.residentWarning("http://127.0.0.1:1", "mlx-community/Qwen3.5-4B-MLX-4bit"), None)
+  }
+
 class ConfinementSuite extends munit.FunSuite:
 
   test("--no-confine is taken literally, and named as such") {

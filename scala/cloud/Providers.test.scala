@@ -65,19 +65,25 @@ class ProviderSuite extends munit.FunSuite:
     assertEquals(pinned.model, "openai/gpt-oss-120b:cheapest")
   }
 
-  test("a local-runtime build is refused with both ways forward") {
-    // This is the repository the project's own local model comes from, and it is the id an
-    // operator will reach for first. The router serves partner-hosted models; MLX and GGUF
-    // are weights to download. Sending one returns model-not-found, which reads as "the Hub
-    // lost my model" rather than "wrong path for this repository".
-    val key = Some(keyFile("t").toString)
-    List("mlx-community/Qwen3.5-4B-MLX-4bit", "bartowski/Qwen3.5-4B-GGUF").foreach { id =>
-      val r = resolve("huggingface", model = id, key = key)
-      assert(r.left.exists(m => m.contains("--provider local") && m.contains("Qwen/Qwen3.5-4B-Instruct")),
-        s"$id: $r")
+  test("a weights repository goes to the local runtime, not to the router") {
+    // This is the repository the project's own local model comes from, so it is the first id
+    // its operator will type. Nobody hosts MLX or GGUF builds behind an API — they are files
+    // to download — so the request can only be answered by a local runtime, and that is where
+    // it goes. No token is involved: nothing is asked of the Hub at inference time.
+    withoutEnv("NADIA_API_KEY", "OPENAI_API_KEY", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN") {
+      List("mlx-community/Qwen3.5-4B-MLX-4bit", "bartowski/Qwen3.5-4B-GGUF").foreach { id =>
+        val ep = resolve("huggingface", model = id).fold(m => fail(s"$id: $m"), identity)
+        assertEquals(ep.baseUrl, local, s"$id must be served locally")
+        assertEquals(ep.auth, Auth.Anonymous, s"$id needs no Hub credential")
+        assertEquals(ep.model, id, "the id passes through — the gateway resolves the repository")
+        assert(Provider.servedLocally("huggingface", id))
+      }
     }
-    // The same weights are perfectly valid on the local path — that is the point of saying so.
-    assert(resolve("local", model = "mlx-community/Qwen3.5-4B-MLX-4bit").isRight)
+    // A partner-hosted repository still goes to the router, and still needs a token.
+    val hosted = resolve("huggingface", model = "Qwen/Qwen3.5-4B-Instruct",
+      key = Some(keyFile("t").toString)).fold(fail(_), identity)
+    assertEquals(hosted.baseUrl, "https://router.huggingface.co/v1")
+    assert(!Provider.servedLocally("huggingface", "Qwen/Qwen3.5-4B-Instruct"))
   }
 
   test("bedrock builds the documented endpoint") {

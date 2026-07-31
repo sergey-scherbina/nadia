@@ -261,16 +261,25 @@ rediscover:
 3. **A credential is fetched per request, not per process.** Google's expire in
    an hour, which is shorter than a long run. An ambient identity (metadata
    server) MUST be preferred over key material where the platform offers one.
-4. **A model id that cannot work at the endpoint is refused before it is sent**,
-   naming what to do instead. Two cases exist so far, and both come back from a
-   provider as an indistinguishable model-not-found:
-   - the resident-model placeholder `local` sent to a hosted provider — name
-     `--model`;
-   - a download-only build (`mlx-community/…`, `…-GGUF`) sent to the Hugging
-     Face router, which serves partner-hosted models only. Name both ways
-     forward: the original repository, or `--provider local` against a gateway
-     holding those weights. **Do not guess an upstream repository name** — the
-     mapping is not mechanical, and a guess is a 404 of the agent's own making.
+4. **A provider names where the model comes FROM; the implementation works out
+   where it can be RUN.** The Hub is the case that forces this: one namespace
+   holds weights to download (`mlx-community/…`, `…-GGUF`) and models a partner
+   hosts, and which one a repository is cannot be read off its id. Weights MUST
+   be routed to the local runtime — nobody serves them behind an API, so that is
+   not a fallback but the only endpoint that could answer — and MUST NOT require
+   a credential, since nothing is asked of the Hub at inference time.
+5. **One model has several valid spellings, and they MUST compare equal.**
+   `org:repo`, `org/repo` and `hf:org/repo` name one set of weights. A string
+   comparison anywhere on this path is a defect: in rozum's gateway it warmed a
+   second resident copy of the model already loaded.
+6. **A model id that cannot work at the endpoint is refused before it is sent**,
+   naming what to do instead — the resident-model placeholder `local` sent to a
+   hosted provider is the case that exists, and it names `--model`. Where the
+   implementation cannot know (a gateway may hold weights it does not
+   advertise), it MUST **warn** rather than refuse or stay silent: a rozum
+   gateway asked for a model it lacks answers with the one it has and labels the
+   reply with the one requested, which is the only failure here invisible in the
+   output.
 
 **Where the agent runs.** A container image is the portable unit; batch mode's
 exit codes (§4.1) are what makes it a Kubernetes `Job` rather than a Deployment.

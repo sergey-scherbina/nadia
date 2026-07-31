@@ -53,9 +53,14 @@ kubectl apply -k deploy/k8s
 ```
 
 A container image, Kubernetes Jobs, ECS and Cloud Run — and the model can stay local or come
-from the Hugging Face router, Bedrock or Vertex, with `local` still the default and still
-credential-free. The Hub is the same place the local weights came from, which makes it the
-one line of the configuration you change when the machine in front of you is too small.
+from Hugging Face, with Bedrock and Vertex there when you want them. `local` is still the
+default and still credential-free.
+
+`--provider huggingface` takes the Hub as what it is: a source of *weights* and a source of
+*serving*, in one namespace. `mlx-community/Qwen3.5-4B-MLX-4bit` — the repository this
+project's own model comes from — routes to your gateway, which fetches it, and needs no
+token; a partner-hosted repository routes to the Hub's router and needs one. Which is which
+cannot be read off the id, so nadia routes on it rather than making you know.
 
 The interesting part is what happens to the safety model on the way. `sandbox-exec` does not
 exist on Linux, so the agent stops claiming it: it names the mechanism actually in force,

@@ -50,16 +50,25 @@ object Provider:
             .toRight("--provider openai needs a key: set NADIA_API_KEY or pass --api-key-file")
             .map(k => Endpoint(gateway, model, Auth.Bearer(k)))
 
-        // The Hub — where the local weights came from in the first place, and the reason
-        // this provider is worth having: the same catalogue, served, when the machine you
-        // are on cannot hold the model you want.
+        // The Hub — where the local weights came from in the first place.
+        //
+        // It is a source of two different things, and which one a repository is cannot be
+        // read off its id: `Qwen/Qwen3.5-4B-Instruct` is served by a partner provider,
+        // `mlx-community/Qwen3.5-4B-MLX-4bit` is weight files for a runtime you run. Both
+        // are "the model, from Hugging Face", and both work here — they just cannot be
+        // answered by the same machine, so the id decides where the request goes.
         case "huggingface" | "hf" =>
-          for
-            k <- key
+          if needsLocalRuntime(model) then
+            // Weights. The thing that can run them is the local gateway, which already
+            // knows how to fetch a repository from the Hub — so this is not a fallback,
+            // it is the only place the request could ever have been answered. No token:
+            // nothing is asked of the Hub at inference time.
+            Right(Endpoint(gateway, model, key.map(Auth.Bearer.apply).getOrElse(Auth.Anonymous)))
+          else
+            key
               .orElse(env("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
               .toRight("--provider huggingface needs a token: set HF_TOKEN or pass --api-key-file")
-            m <- servedByTheRouter(model)
-          yield Endpoint("https://router.huggingface.co/v1", m, Auth.Bearer(k))
+              .map(k => Endpoint("https://router.huggingface.co/v1", model, Auth.Bearer(k)))
 
         case "bedrock" =>
           for
@@ -92,35 +101,28 @@ object Provider:
           Left(s"unknown provider `$other` — one of ${names.mkString(", ")}")
     yield ep
 
-  /** The Hub hosts two different things under one namespace, and the difference is invisible
-    * in a model id.
+  /** Whether a repository holds weights for a runtime you run, rather than a model somebody
+    * else is serving.
     *
-    * `mlx-community/Qwen3.5-4B-MLX-4bit` — the repository this project's local model actually
-    * comes from — is a set of weight files for a runtime you run yourself. The router serves
-    * models hosted by its partner providers, and MLX and GGUF quantizations are not among
-    * them: they exist to be downloaded, not called.
+    * The two live in one namespace on the Hub and are told apart only by convention: a
+    * quantization format in the name. `mlx-community/Qwen3.5-4B-MLX-4bit` and anything
+    * `-GGUF` are files to download; nobody hosts them behind an API, so a request for one
+    * has to go to a local runtime or nowhere.
     *
-    * Sending one anyway comes back as a model-not-found, which reads as "the Hub has lost my
-    * model" rather than "that repository is for the other path". So it is refused here,
-    * naming both ways forward. No upstream repository is guessed: `mlx-community` names are
-    * not mechanically derivable from the original, and inventing one would send the operator
-    * to a 404 of our own making.
+    * Deliberately a routing decision and not a refusal. These are the most likely ids for
+    * this project's own operator to type — it is the repository its local model comes from —
+    * and answering "unsupported" to the model you are actually running would be absurd.
     */
-  private def servedByTheRouter(model: String): Either[String, String] =
+  def needsLocalRuntime(model: String): Boolean =
     val id = model.toLowerCase
-    val localFormat =
-      if id.startsWith("mlx-community/") || id.contains("mlx") then Some("an MLX")
-      else if id.contains("gguf") then Some("a GGUF")
-      else None
-    localFormat match
-      case None => Right(model)
-      case Some(what) =>
-        Left(
-          s"`$model` looks like $what build — those are weights to download and run yourself, " +
-            "and the Hugging Face router only serves models its partner providers host. " +
-            "Either pass the original repository (e.g. Qwen/Qwen3.5-4B-Instruct), or keep this " +
-            "one and use --provider local against a gateway that has it resident."
-        )
+    id.startsWith("mlx-community/") || id.contains("mlx") || id.contains("gguf")
+
+  /** True when this combination will be answered by the gateway on the other end of
+    * `--gateway`, whichever provider was named. The front-end uses it to check that the
+    * gateway is actually serving the model that was asked for.
+    */
+  def servedLocally(provider: String, model: String): Boolean =
+    provider == "local" || ((provider == "huggingface" || provider == "hf") && needsLocalRuntime(model))
 
   /** `local` is the model id a caller uses to mean "whatever you have resident", which is a
     * rozum gateway idea. Sent to Bedrock or Vertex it is a 404 on a model name, and that

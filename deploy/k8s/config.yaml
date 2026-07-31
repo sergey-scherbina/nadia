@@ -13,10 +13,10 @@ metadata:
 data:
   # local  — an OpenAI-compatible gateway you run (rozum, vLLM, anything). No credential.
   # openai — any hosted OpenAI-compatible endpoint, with a bearer token.
-  # huggingface — the Hub's router. Needs an HF token in the Secret below, and a model the
-  #           router actually serves: `mlx-community/…` and `…-GGUF` are weights to download,
-  #           not models to call, and nadia refuses them rather than letting the Hub answer
-  #           model-not-found.
+  # huggingface — where the model comes from, either way it can be run. A partner-hosted
+  #           repository goes to the Hub's router and needs an HF token in the Secret below;
+  #           a weights repository (`mlx-community/…`, `…-GGUF`) goes to OPENAI_BASE_URL
+  #           below, because nobody serves those behind an API — and needs no token at all.
   # bedrock — AWS. Needs NADIA_REGION and a Bedrock API key in the Secret below.
   # vertex  — Google. Needs NADIA_PROJECT and NADIA_REGION; on GKE with Workload Identity
   #           there is no key at all, because the pod's identity IS the credential.
