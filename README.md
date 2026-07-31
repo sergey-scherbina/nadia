@@ -29,9 +29,26 @@ makes malformed arguments impossible rather than unlikely.
 
 So nadia is the leaf: tools, prompts, safety policy, and the user interface.
 
+## Three implementations
+
+| | Run it | State |
+|---|---|---|
+| Rust | `nadia run "…"` (`rozum:crates/nadia`) | Reference. Subagents, HTTP control surface, Telegram. 8/8 on the rozum matrix. |
+| ScalaScript | `ssc run src/nadia.ssc -- run "…"` | Batch + REPL, verified on a live model. |
+| Scala 3 | `scala-cli run scala -- run "…"` | Batch + REPL, verified on a live model. 13 tests. |
+
+The Scala 3 one has no SDK underneath it — the model client, the agent loop and the tools
+are all in `scala/` — so it is the honest measure of how much an agent actually is.
+
+### Build the Scala 3 one as a binary
+
+```bash
+scala-cli --power package scala -o nadia-scala --assembly
+```
+
 ## Status
 
-**P0, in progress.** Not yet usable. See `SPEC.md` §8 for phasing.
+**P0.** Usable. See `SPEC.md` §8 for phasing.
 
 ## Quickstart (once P0 lands)
 

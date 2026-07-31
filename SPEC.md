@@ -8,16 +8,23 @@ interactive **REPL chat**. Later: subagents as actors, and a Telegram front-end.
 Status: **P0 in progress.** This spec is written before the code and is the
 contract the code is reviewed against (`/spec-dev`).
 
-## 0. Two implementations, one spec
+## 0. Three implementations, one spec
 
-nadia exists twice on purpose:
+nadia exists three times on purpose, and the three differ in exactly one axis: how much
+sits underneath them.
 
-| | Where | Role |
-|---|---|---|
-| **Rust** | `rozum:crates/nadia` | The executable reference. Shipped first because Rust already has the process and stdin primitives the tools need. |
-| **ScalaScript** | this repo | Dogfoods the language against `std.agent`; blocked on the two upstream gaps in `BACKLOG.md`. |
+| | Where | What is underneath | Role |
+|---|---|---|---|
+| **Rust** | `rozum:crates/nadia` | `rozum-agent` (loop, budgets), `rozum-gateway` (client) | The executable reference. Shipped first — Rust already had the process and stdin primitives the tools need. |
+| **ScalaScript** | `src/*.ssc` | `std.agent` (loop, streaming, retry, schemas) | Dogfoods the language. The thinnest of the three: the SDK carries Contracts 1–3. |
+| **Scala 3** | `scala/*.scala` | nothing but the JDK and one JSON library | Carries all three contracts itself. |
 
-Both implement *this* spec — same six tools, same safety model, same CLI surface.
+The Scala 3 one exists to answer a question the other two cannot: *how much of an agent is
+the framework?* It has no SDK under it — the model client, the loop and the tools are all
+in the file tree — and it lands in about 700 lines including its tests. That number is the
+useful output.
+
+All three implement *this* spec — same six tools, same safety model, same CLI surface.
 A divergence between them is a bug in one of them, and this file decides which.
 
 ## 1. Position in the stack
