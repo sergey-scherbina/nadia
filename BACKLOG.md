@@ -56,27 +56,40 @@ not acceptable to ship.
 
 </details>
 
-### NAD-2 — no stdin primitive for the REPL (**upstream: scalascript — FILED**)
+### NAD-2 — ~~no stdin primitive for the REPL~~ **FIXED upstream, verified 2026-07-31**
 
-`std.os` exposes `env` / `args` / `cwd` but nothing that reads a line from stdin,
-so the interactive mode has no input source. Verified 2026-07-31 against
-`scalascript@983b520ce`: the only occurrence of `readLine` in the tree is a
-comment in `runtime/std/free.ssc:97`.
+`std.os.readLine` landed in `scalascript@862a19adb`, with exactly the surface the
+report asked for:
 
-Reported upstream as **[scalascript#76](https://github.com/sergey-scherbina/scalascript/issues/76)**
-via their `user-report` form, which their `POLICY.md` P-3.10 makes the front door
-of the inbound queue. The form asks reporters *not* to diagnose, so the proposed
-surface (`extern def readLine(): Option[String]`, `None` at EOF) and the
-implementation order live in the `scalascript:BUGS.md` entry
-`std-has-no-stdin-primitive` instead, which now points at #76; their triage owns
-which of the two survives.
+```scala
+extern def readLine(): Option[String]   // None at EOF
+```
 
-**Do not implement it here** — this is theirs to land, and a local workaround
-would diverge from whatever they ship.
+Verified here against a toolchain rebuilt to `fa335ba23` (**not** the stale one —
+that mistake is NAD-1), all three branches distinguished:
 
-No workaround exists on the standard lane: a ```scala passthrough does not give
-JVM interop there (`unbound global: java`), and reading stdin through
-`exec` inherits no terminal.
+| input | result |
+|---|---|
+| `printf 'sergiy\n' \|` | `Some("sergiy")` |
+| `< /dev/null` (EOF) | `None` |
+| `printf '\n' \|` (bare Enter) | `Some("")` — *not* EOF |
+| `printf '  padded  \n' \|` | `Some("  padded  ")` — terminator stripped, spaces kept |
+
+The third row is the whole reason the report argued for `Option`: an empty line and
+a closed pipe are different events. (nadia's own approval gate conflated exactly
+those two and auto-approved everything at EOF until it was found by driving the
+REPL — same defect, our side.)
+
+Scope note, where upstream corrected the report: it proposed implementing on
+`int`, `js`, `jvm`, `native`. They measured instead — `std/os` does not resolve on
+js or jvm at all (`envOrElse` fails there), so there was nothing to add `readLine`
+to. It ships where `env` works: `int` and `native`/v2.
+
+Reported as [scalascript#76](https://github.com/sergey-scherbina/scalascript/issues/76)
+through their `user-report` form (`POLICY.md` P-3.10 makes it the front door of the
+inbound queue); triage merged it with the board entry into one.
+
+**NAD-5 is unblocked** — the ScalaScript REPL can now be written.
 
 ## P0
 
@@ -89,7 +102,7 @@ the two disagree, `SPEC.md` decides.
   Unblocked: `std.process.exec` works on the standard lane since `f101312ed`
   (rebuild the toolchain first — see NAD-1).
 - NAD-4 — batch CLI (`SPEC.md` §4.1), exit codes 0/1/2.
-- NAD-5 — REPL (`SPEC.md` §4.2), slash commands. Blocked on NAD-2.
+- NAD-5 — REPL (`SPEC.md` §4.2), slash commands. Unblocked (NAD-2 fixed upstream).
 - NAD-6 — approval gates (§3.3) and budgets/loop-breaker (§3.4–3.5).
 - NAD-7 — first matrix row (`SPEC.md` §5). **No launcher change needed**: the
   Rust twin established that `rozum launch` already exports `OPENAI_BASE_URL`
