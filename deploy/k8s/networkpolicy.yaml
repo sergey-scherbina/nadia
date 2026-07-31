@@ -1,0 +1,70 @@
+# `--allow-net`, spelled the only way it can be spelled inside a container.
+#
+# On macOS the agent denies the network to `bash` itself, through the seatbelt profile. In a
+# container it cannot: the agent and the commands it runs share one network namespace, so
+# anything nadia can reach to talk to the model, a command can reach too. The separation has
+# to move up a layer — to whoever owns the network. In Kubernetes that is this object.
+#
+# What it says: this pod may resolve names and may talk to the model endpoint. Nothing else.
+# A command that tries to curl the internet, or to reach another service in the cluster, gets
+# no route — enforced by the CNI, not by the process being asked nicely.
+#
+# REQUIRES A CNI THAT ENFORCES NetworkPolicy. Calico, Cilium and the cloud CNIs do; several
+# default installs (and plain kind) silently do not, and an unenforced policy looks exactly
+# like an enforced one until you test it. Verify, once, per cluster:
+#
+#   kubectl run probe --rm -it --restart=Never --labels app.kubernetes.io/name=nadia \
+#     --image=curlimages/curl -- curl -sS -m 5 https://example.com
+#
+# It must fail. If it succeeds, this file is decoration and the containment story is the
+# container's alone.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nadia-egress
+  labels:
+    app.kubernetes.io/name: nadia
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nadia
+  policyTypes: [Egress]
+  egress:
+    # DNS. Without it every name lookup hangs until it times out, which reads as a slow
+    # model rather than as a blocked pod.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # The model, and only the model. This is the in-cluster case — a gateway you run.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rozum-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+
+    # For Bedrock or Vertex the endpoint is outside the cluster and has no stable address, so
+    # the honest form is a CIDR plus 443. Narrow it to the provider's published ranges if you
+    # have them; as written it allows any public address on 443, which is weaker than the
+    # in-cluster rule above and should be read that way.
+    # - to:
+    #     - ipBlock:
+    #         cidr: 0.0.0.0/0
+    #         except: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]
+    #   ports:
+    #     - protocol: TCP
+    #       port: 443
+
+    # NOTE: the Job's init container clones from GitHub over 443, and it carries the same pod
+    # labels, so it is subject to this policy too. Either uncomment the block above, or drop
+    # the init container and mount a workspace somebody else filled. Denying egress and then
+    # cloning from the internet in the same pod cannot both be true.

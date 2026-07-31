@@ -1,0 +1,53 @@
+# What the agent is pointed at, and what it is allowed to prove about itself.
+#
+# Split from the Job on purpose: the Job says what to do, this says where the model is. The
+# same Job manifest then runs against a rozum gateway inside the cluster, against Bedrock, or
+# against Vertex, by editing this file alone.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nadia
+  labels:
+    app.kubernetes.io/name: nadia
+data:
+  # local  — an OpenAI-compatible gateway you run (rozum, vLLM, anything). No credential.
+  # openai — any hosted OpenAI-compatible endpoint, with a bearer token.
+  # bedrock — AWS. Needs NADIA_REGION and a Bedrock API key in the Secret below.
+  # vertex  — Google. Needs NADIA_PROJECT and NADIA_REGION; on GKE with Workload Identity
+  #           there is no key at all, because the pod's identity IS the credential.
+  NADIA_PROVIDER: "local"
+
+  # Only read when NADIA_PROVIDER is local or openai. A Service in this namespace is the
+  # usual answer; note the /v1, which nadia will also add itself if you leave it off.
+  OPENAI_BASE_URL: "http://rozum-gateway.default.svc.cluster.local:8080/v1"
+
+  # `local` means "whatever model that gateway has resident" and only a rozum gateway
+  # understands it. Bedrock and Vertex need a real id — nadia refuses rather than sending
+  # `local` and letting it come back as a 404 on a model name.
+  NADIA_MODEL: "local"
+
+  # NADIA_REGION: "us-east-1"        # bedrock
+  # NADIA_PROJECT: "my-gcp-project"  # vertex
+  # NADIA_REGION: "europe-west4"     # vertex location, or `global`
+---
+# The credential, as a FILE rather than an environment variable.
+#
+# That is the reason this is mounted rather than injected with `envFrom`: this process starts
+# `bash` on a model's say-so, and a child process inherits the environment. It does not
+# inherit an open file descriptor to something it was never told about. `--api-key-file` is
+# the flag that reads it, and there is deliberately no `--api-key` flag taking the value
+# inline, because that would put the key in `ps` output inside the container.
+#
+# Leave this out entirely for `local`, and for `vertex` on GKE with Workload Identity.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nadia-model-credential
+  labels:
+    app.kubernetes.io/name: nadia
+type: Opaque
+stringData:
+  # Replace before applying, or create it out of band and delete this file:
+  #   kubectl create secret generic nadia-model-credential --from-file=api-key=./key.txt
+  api-key: "REPLACE-ME"

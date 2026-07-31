@@ -1,6 +1,6 @@
 package nadia.rozum
 
-import agent.{AgentLoop, Budget, ModelClient, Observer, Outcome, Stop, Tool, Wire}
+import agent.{AgentLoop, Budget, ModelClient, Observer, Outcome, Stop, Wire}
 import scala.io.StdIn
 import scala.util.Try
 
@@ -33,13 +33,15 @@ object Nadia:
     * without a terminal-control layer, and what a coding agent's UI has to get right is
     * showing WHAT IT DID, not drawing panes.
     */
-  def chat(client: ModelClient, sb: Sandbox, budget: Budget, model: String, allowNet: Boolean): Int =
+  def chat(client: ModelClient, sb: Sandbox, budget: Budget, model: String): Int =
     val tools = Tools.all(sb)
     var conversation = List(Wire.system(systemPrompt(sb.root.toString)))
 
     println(s"nadia · $model · ${sb.root}")
     println(s"${tools.length} tools · /help for commands · ctrl-d to exit")
-    if !allowNet then println("network denied to `bash` (--allow-net to permit)")
+    // The containment is stated, not implied. Which mechanism is in force depends on where
+    // this is running, and an operator who assumes the wrong one is the failure mode.
+    println(sb.confinement.describe(sb.allowNet))
 
     var running = true
     while running do

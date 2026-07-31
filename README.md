@@ -45,6 +45,25 @@ not its loop.
 All three implement [`SPEC.md`](SPEC.md), which was written before any of them. Where two
 disagree, the spec decides.
 
+## Somewhere other than your laptop
+
+```bash
+docker compose run --rm nadia run "add a --json flag and a test for it"
+kubectl apply -k deploy/k8s
+```
+
+A container image, Kubernetes Jobs, ECS and Cloud Run — and the model can stay local or
+come from Bedrock or Vertex, with `local` still the default and still credential-free.
+
+The interesting part is what happens to the safety model on the way. `sandbox-exec` does not
+exist on Linux, so the agent stops claiming it: it names the mechanism actually in force,
+and `--allow-net` reports itself as the no-op it becomes inside a container, where the agent
+and the commands it runs share one network namespace. Restricting egress moves up to the
+layer that owns the network — which is what `deploy/k8s/networkpolicy.yaml` is for.
+
+[deployment.md](docs/deployment.md) has the whole of it, including which parts were run and
+which are reviewed templates that have never touched a real account.
+
 ## Safety
 
 The loop never performs a side effect. Every effect goes through a handler that validates
@@ -67,6 +86,7 @@ repetition guard that cut agents off mid-repair.
 | [tools.md](docs/tools.md) | the six tools, and how to write one a small model can use |
 | [safety.md](docs/safety.md) | containment, and the incidents behind it |
 | [operations.md](docs/operations.md) | running it, subagents, Telegram, the matrix |
+| [deployment.md](docs/deployment.md) | containers, Kubernetes, AWS, Google — and what confinement means once you leave macOS |
 | [development.md](docs/development.md) | building and testing each implementation |
 | [SPEC.md](SPEC.md) | the contract |
 | [BACKLOG.md](BACKLOG.md) | what is not done, and what is blocked upstream |

@@ -1,0 +1,65 @@
+# nadia as a Cloud Run job.
+#
+#   gcloud run jobs replace deploy/gcp/cloudrun-job.yaml --region europe-west4
+#   gcloud run jobs execute nadia --region europe-west4 --wait \
+#       --args=run,"read README.md and report what this project builds"
+#
+# This is the deployment where nothing has to be copied anywhere. The service account below
+# IS the credential: Cloud Run's metadata server issues short-lived tokens against it, nadia
+# asks for one before every request and caches it until just before it expires, and no key
+# material exists to leak, rotate or accidentally commit. That path is `GoogleToken` in
+# scala/cloud/Providers.scala, and it is why `vertex` needs no Secret while `bedrock` does.
+#
+# Grant the service account `roles/aiplatform.user` on the project and nothing else.
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: nadia
+  labels:
+    cloud.googleapis.com/location: europe-west4
+spec:
+  template:
+    spec:
+      parallelism: 1
+      taskCount: 1
+      template:
+        spec:
+          serviceAccountName: nadia@PROJECT.iam.gserviceaccount.com
+
+          # A budget-exhausted run exits 1. Retrying it re-runs the same task into the same
+          # wall and bills for it twice, so: no retries. The inner bound is --max-steps.
+          maxRetries: 0
+          timeoutSeconds: 3600
+
+          containers:
+            - image: REGION-docker.pkg.dev/PROJECT/nadia/nadia:latest
+              args: ["run", "read README.md and report what this project builds"]
+
+              env:
+                - name: NADIA_PROVIDER
+                  value: "vertex"
+                - name: GOOGLE_CLOUD_PROJECT
+                  value: "PROJECT"
+                - name: GOOGLE_CLOUD_REGION
+                  value: "europe-west4"
+                - name: NADIA_MODEL
+                  value: "google/gemini-3-flash"
+
+              resources:
+                limits:
+                  cpu: "1"
+                  # The image sizes the JVM heap from this limit rather than from the host.
+                  memory: "2Gi"
+
+              # Cloud Run's filesystem is already ephemeral and in-memory; /workspace exists
+              # so the agent has somewhere with a name to work, and dies with the execution.
+              # Attach a GCS or Filestore volume here when a result has to survive the run.
+              volumeMounts:
+                - name: workspace
+                  mountPath: /workspace
+
+          volumes:
+            - name: workspace
+              emptyDir:
+                medium: Memory
+                sizeLimit: 512Mi

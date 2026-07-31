@@ -1,0 +1,9 @@
+# The build needs `scala/` and nothing else. Everything below either bloats the context or
+# poisons the build cache: `.scala-build` in particular is a host-shaped artefact directory
+# that would be copied over the sources and then compiled against a different JDK.
+*
+!scala/**
+
+scala/.scala-build/
+scala/.bsp/
+scala/.idea/

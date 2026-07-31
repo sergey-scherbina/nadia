@@ -1,0 +1,94 @@
+{
+  "_comment": [
+    "nadia as an ECS task on Fargate — one task, one agent run.",
+    "",
+    "Replace ACCOUNT, REGION and the two role ARNs, then:",
+    "  aws ecs register-task-definition --cli-input-json file://ecs-task-definition.json",
+    "  aws ecs run-task --cluster CLUSTER --task-definition nadia --launch-type FARGATE \\",
+    "      --network-configuration 'awsvpcConfiguration={subnets=[subnet-…],assignPublicIp=ENABLED}' \\",
+    "      --overrides '{\"containerOverrides\":[{\"name\":\"nadia\",\"command\":[\"run\",\"YOUR TASK\"]}]}'",
+    "",
+    "The task text is a command override rather than a baked-in argument, so one registered",
+    "definition serves every task instead of a new revision per run.",
+    "",
+    "KNOWN GAP, stated here because it decides how you configure this: nadia authenticates to",
+    "Bedrock with a Bedrock API key (a bearer token), not with SigV4 against the task role.",
+    "That means the key has to exist as a secret, and the task role is NOT what grants model",
+    "access. SigV4 is the native AWS answer and it is not implemented — see BACKLOG NAD-12.",
+    "",
+    "ECS injects secrets as environment variables only; there is no file projection as there",
+    "is in Kubernetes. So on ECS the credential arrives in the environment, which the agent's",
+    "child processes inherit. That is a real difference in posture from the k8s manifests, and",
+    "it is the reason --api-key-file exists and is preferred where it can be used."
+  ],
+
+  "family": "nadia",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "1024",
+  "memory": "2048",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+
+  "executionRoleArn": "arn:aws:iam::ACCOUNT:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT:role/nadiaTaskRole",
+
+  "volumes": [
+    {
+      "name": "workspace",
+      "_comment": "Ephemeral, dies with the task. For a workspace that outlives it, attach an EFS volume here instead."
+    },
+    { "name": "tmp" },
+    { "name": "home" }
+  ],
+
+  "containerDefinitions": [
+    {
+      "name": "nadia",
+      "image": "ACCOUNT.dkr.ecr.REGION.amazonaws.com/nadia:latest",
+      "essential": true,
+
+      "command": ["run", "read README.md and report what this project builds"],
+
+      "user": "1000:1000",
+      "readonlyRootFilesystem": true,
+      "linuxParameters": {
+        "capabilities": { "drop": ["ALL"] },
+        "initProcessEnabled": true
+      },
+
+      "mountPoints": [
+        { "sourceVolume": "workspace", "containerPath": "/workspace", "readOnly": false },
+        { "sourceVolume": "tmp", "containerPath": "/tmp", "readOnly": false },
+        { "sourceVolume": "home", "containerPath": "/home/nadia", "readOnly": false }
+      ],
+
+      "environment": [
+        { "name": "NADIA_PROVIDER", "value": "bedrock" },
+        { "name": "AWS_REGION", "value": "REGION" },
+        { "name": "NADIA_MODEL", "value": "us.anthropic.claude-sonnet-4-6" }
+      ],
+
+      "secrets": [
+        {
+          "name": "AWS_BEARER_TOKEN_BEDROCK",
+          "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:nadia/bedrock-api-key"
+        }
+      ],
+
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/nadia",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "nadia",
+          "awslogs-create-group": "true"
+        }
+      },
+
+      "stopTimeout": 120
+    }
+  ]
+}

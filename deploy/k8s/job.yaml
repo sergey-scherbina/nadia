@@ -1,0 +1,126 @@
+# One task, one Job.
+#
+# A batch agent is a Job and not a Deployment, and the exit codes are why: nadia exits 0
+# finished, 1 budget exhausted, 2 gateway failure. Kubernetes already knows what to do with
+# that — `backoffLimit: 0` means a budget-exhausted run is recorded as failed and left alone
+# rather than restarted into the same wall. A Deployment would restart it forever.
+#
+#   kubectl apply -f config.yaml -f job.yaml
+#   kubectl logs -f job/nadia
+#
+# The task is `args`. To run a different one, `kubectl create job --from=cronjob/…` or just
+# edit and re-apply under a new name — Jobs are immutable once created.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nadia
+  labels:
+    app.kubernetes.io/name: nadia
+spec:
+  backoffLimit: 0
+  # A stuck run must not bill forever. This is the outer bound; --max-steps is the inner one.
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nadia
+    spec:
+      restartPolicy: Never
+
+      # The workspace. An emptyDir seeded by the init container below: the Job clones, works,
+      # and the volume dies with the pod. Swap it for a PersistentVolumeClaim when the result
+      # has to outlive the run, or drop the init container and mount a PVC somebody else
+      # filled.
+      volumes:
+        - name: workspace
+          emptyDir: {}
+        # A read-only root filesystem still needs scratch space for the JVM and for whatever
+        # the project's toolchain puts in $HOME. Both are emptyDir, so they exist for this
+        # pod and no longer.
+        - name: tmp
+          emptyDir: {}
+        - name: home
+          emptyDir: {}
+        - name: model-credential
+          secret:
+            secretName: nadia-model-credential
+            defaultMode: 0400
+            optional: true
+
+      initContainers:
+        - name: clone
+          image: alpine/git:latest
+          args:
+            - clone
+            - --depth=1
+            - "https://github.com/sergey-scherbina/nadia.git"
+            - /workspace
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+
+      containers:
+        - name: nadia
+          image: ghcr.io/sergey-scherbina/nadia:latest
+          imagePullPolicy: IfNotPresent
+
+          # The task. Everything after `run` is one argument's worth of English.
+          args:
+            - run
+            - "read README.md and report what this project builds, in three sentences"
+            # Add --api-key-file when the Secret above is real:
+            # - --api-key-file
+            # - /etc/nadia/api-key
+
+          envFrom:
+            - configMapRef:
+                name: nadia
+          env:
+            # Read by nadia.cloud.Provider as the fallbacks for --region / --project.
+            - name: AWS_REGION
+              valueFrom: { configMapKeyRef: { name: nadia, key: NADIA_REGION, optional: true } }
+            - name: GOOGLE_CLOUD_REGION
+              valueFrom: { configMapKeyRef: { name: nadia, key: NADIA_REGION, optional: true } }
+            - name: GOOGLE_CLOUD_PROJECT
+              valueFrom: { configMapKeyRef: { name: nadia, key: NADIA_PROJECT, optional: true } }
+
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: tmp
+              mountPath: /tmp
+            - name: home
+              mountPath: /home/nadia
+            - name: model-credential
+              mountPath: /etc/nadia
+              readOnly: true
+
+          # This block is the confinement, now that sandbox-exec is not available. nadia
+          # detects that it is in a container and reports "confined by the container runtime"
+          # — these lines are what makes that sentence true rather than decorative.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              # The JVM sizes its heap from this (MaxRAMPercentage in the image), so a limit
+              # here is a heap setting, not just a cap.
+              memory: "2Gi"

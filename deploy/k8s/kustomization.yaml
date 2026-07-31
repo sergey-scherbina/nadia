@@ -1,0 +1,19 @@
+# kubectl apply -k deploy/k8s
+#
+# The NetworkPolicy is included, and on a cluster whose CNI does not enforce it that is a
+# no-op rather than an error — see the warning in the file itself.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+commonLabels:
+  app.kubernetes.io/name: nadia
+  app.kubernetes.io/component: agent
+
+resources:
+  - config.yaml
+  - job.yaml
+  - networkpolicy.yaml
+
+images:
+  - name: ghcr.io/sergey-scherbina/nadia
+    newTag: latest

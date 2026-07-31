@@ -120,6 +120,23 @@ the file: the text you quoted is not there
 **Name the missing argument.** `missing required string argument \`path\`` is actionable;
 a type error from inside a handler is not.
 
+**Accept the obvious coercion, and never call a supplied argument missing.** Asked to write
+a line count into a file, Qwen3.5-4B sent `{"path": "count.txt", "content": 4}` — a JSON
+number where the schema says string. The reader answered *missing required string argument
+`content`*, which is false: it was supplied. So the model re-sent the identical call, four
+times, until the repetition guard ended the run — on a task it had already solved two steps
+earlier.
+
+A JSON scalar has one obvious textual form, so a number, a boolean or a string are all
+accepted now. Objects and arrays are not, because there is no single right way to render
+them and guessing would put invented content into a file — and the refusal says *what* was
+sent rather than claiming nothing was. `null` counts as missing, not as empty, so a lost
+value cannot quietly truncate a file.
+
+Two lessons, and the second is the bigger one: a strict schema does not mean the argument
+arrives in that shape, and **a wrong error message is worse than a blunt one**, because the
+model believes it and acts on it.
+
 **Be atomic and high-level.** One `post_transaction` that performs the whole double entry
 beats five primitives the model must sequence correctly. This is also what sets the model
 size a task needs: the more sequencing you leave to the model, the bigger the model.

@@ -42,11 +42,41 @@ object Schema:
   * handler is not.
   */
 object Args:
+
+  /** A required string, accepting any JSON scalar in its place.
+    *
+    * A number, a boolean or null has exactly one obvious textual form, and a model that
+    * answers `{"content": 4}` when asked to write the number four has not made a mistake
+    * worth failing a task over. Refusing it was not strictness, it was pedantry with a
+    * misleading error attached: the message said the argument was *missing* when it had been
+    * supplied, so the model re-sent the same call verbatim — four times, until the
+    * repetition guard stopped the run. Found by running the agent in a container against a
+    * real 4B model, on a task it had otherwise already solved.
+    *
+    * Objects and arrays are still refused. There is no single right way to render those as
+    * text, and guessing one would put invented content into a file.
+    */
   def str(v: ujson.Value, key: String): Either[String, String] =
-    scala.util.Try(v(key).str).toOption.toRight(s"missing required string argument `$key`")
+    scala.util.Try(v(key)).toOption match
+      case Some(ujson.Str(s))  => Right(s)
+      case Some(ujson.Num(n))  => Right(if n.isWhole then n.toLong.toString else n.toString)
+      case Some(ujson.Bool(b)) => Right(b.toString)
+      // `null` is not an empty string. Reading it as one would quietly write an empty file
+      // where the model meant to write something and lost it.
+      case None | Some(ujson.Null) => Left(s"missing required string argument `$key`")
+      case Some(other) =>
+        Left(
+          s"argument `$key` must be a string, but a ${kind(other)} was sent — " +
+            "pass the value as text"
+        )
+
+  private def kind(v: ujson.Value): String = v match
+    case _: ujson.Obj => "JSON object"
+    case _: ujson.Arr => "JSON array"
+    case _            => "non-string value"
 
   def optStr(v: ujson.Value, key: String): Option[String] =
-    scala.util.Try(v(key).str).toOption.filter(_.nonEmpty)
+    str(v, key).toOption.filter(_.nonEmpty)
 
   def optLong(v: ujson.Value, key: String): Option[Long] =
     scala.util.Try(v(key).num.toLong).toOption

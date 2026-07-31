@@ -5,7 +5,7 @@
 ### Scala 3 — `scala/`
 
 ```bash
-scala-cli test scala           # 24 tests
+scala-cli test scala           # 40 tests
 scala-cli run scala -- run "…" --workspace /tmp/scratch
 scala-cli --power package scala -o nadia-scala --assembly
 ```
@@ -17,9 +17,10 @@ Layout:
 
 ```
 scala/
-  Main.scala        package nadia         arguments in, exit code out — 93 lines
+  Main.scala        package nadia         arguments in, exit code out
   sdk/              package agent         the generic SDK, no rozum and no nadia in it
   rozum/            package nadia.rozum   sandbox, six tools, prompt, gateway, front-ends
+  cloud/            package nadia.cloud   provider presets and credentials (deployment.md)
 ```
 
 The one rule worth enforcing by hand, because nothing checks it automatically: **nothing
@@ -50,7 +51,7 @@ already been fixed.
 ### Rust — `rozum:crates/nadia`
 
 ```bash
-cargo test -p nadia --no-default-features       # 36 tests
+cargo test -p nadia --no-default-features       # 37 tests
 cargo build --release -p nadia
 cp target/release/nadia ~/.cargo/bin/nadia
 ```

@@ -20,18 +20,58 @@ trait ModelClient:
 
 final case class Sampling(temperature: Double = 0.0, maxTokens: Int = 4096)
 
-final case class Endpoint(baseUrl: String, model: String):
+/** How a request proves it is allowed to ask.
+  *
+  * `Anonymous` is the default and stays the default: the agent has to remain usable against
+  * a gateway on the same machine with no account, no key and no network. Everything hosted
+  * wants a bearer token instead.
+  *
+  * The general case is a *supplier*, not a string, because Google's tokens expire in an hour
+  * — shorter than a long agent run, so a token read once at startup dies mid-task. A fixed
+  * key is then the degenerate case of a supplier, rather than the other way round.
+  */
+sealed trait Auth:
+  /** The header value to send, or the reason one could not be obtained. */
+  def header: Either[String, Option[String]]
+
+object Auth:
+  case object Anonymous extends Auth:
+    def header: Either[String, Option[String]] = Right(None)
+
+  /** `toString` is redacted deliberately. This value is reachable from `Endpoint`, which
+    * appears in exception messages and debug prints, and a key that is printed once is a key
+    * that has leaked.
+    */
+  final case class Bearer(token: String) extends Auth:
+    def header: Either[String, Option[String]] = Right(Some(s"Bearer $token"))
+    override def toString: String = "Bearer(<redacted>)"
+
+  /** Re-asked before every request, so the supplier owns caching and renewal. */
+  final case class Fresh(get: () => Either[String, String]) extends Auth:
+    def header: Either[String, Option[String]] = get().map(t => Some(s"Bearer $t"))
+    override def toString: String = "Fresh(<supplier>)"
+
+final case class Endpoint(baseUrl: String, model: String, auth: Auth = Auth.Anonymous):
   val url: String = s"${Endpoint.withV1(baseUrl)}/chat/completions"
 
 object Endpoint:
   /** OpenAI-compatible base URLs circulate in two spellings, with and without the `/v1`
-    * segment, and callers rarely know which one they were handed. Normalize rather than
-    * make them care: getting it wrong is a 404 with an empty body, which reads like
-    * anything except a path problem.
+    * segment, and callers rarely know which one they were handed. Complete rather than make
+    * them care: getting it wrong is a 404 with an empty body, which reads like anything
+    * except a path problem.
+    *
+    * Only a *bare origin* is completed. A base URL that already carries a path is somebody's
+    * deliberate route and must survive untouched — Vertex AI's
+    * `…/locations/L/endpoints/openapi` is the case that taught us this, and the earlier rule
+    * ("append unless it ends in /v1") turned it into `…/openapi/v1/chat/completions`, which
+    * 404s exactly like a wrong host or a wrong key.
     */
   def withV1(u: String): String =
     val t = u.stripSuffix("/")
-    if t.endsWith("/v1") then t else s"$t/v1"
+    if hasPath(t) then t else s"$t/v1"
+
+  private def hasPath(u: String): Boolean =
+    Try(URI.create(u).getPath).toOption.exists(p => p != null && p.nonEmpty && p != "/")
 
 /** An OpenAI-compatible gateway over HTTP: `POST /v1/chat/completions`.
   *
@@ -55,19 +95,37 @@ final class HttpModelClient(endpoint: Endpoint, requestTimeout: Duration = Durat
       "temperature" -> sampling.temperature,
       "max_tokens" -> sampling.maxTokens
     )
-    val req = HttpRequest
-      .newBuilder(URI.create(endpoint.url))
-      .header("content-type", "application/json")
-      .timeout(requestTimeout)
-      .POST(HttpRequest.BodyPublishers.ofString(ujson.write(body)))
-      .build()
-    Try(http.send(req, HttpResponse.BodyHandlers.ofString())).toEither.left
-      .map(t => s"gateway unreachable: ${t.getMessage}")
-      .flatMap { resp =>
-        if resp.statusCode() != 200 then
-          Left(s"gateway returned ${resp.statusCode()}: ${resp.body().take(200)}")
-        else Wire.readTurn(resp.body())
-      }
+    // Asked per request, not per client: a credential with an hour of life must be renewed
+    // under a run that outlives it, and this is the only place that knows a request is
+    // about to happen.
+    endpoint.auth.header.left.map(e => s"no credential: $e").flatMap { auth =>
+      val builder = HttpRequest
+        .newBuilder(URI.create(endpoint.url))
+        .header("content-type", "application/json")
+        .timeout(requestTimeout)
+        .POST(HttpRequest.BodyPublishers.ofString(ujson.write(body)))
+      auth.foreach(v => builder.header("authorization", v))
+      val req = builder.build()
+      Try(http.send(req, HttpResponse.BodyHandlers.ofString())).toEither.left
+        // `getMessage` is null on a bare ConnectException, and "gateway unreachable: null"
+        // is the first thing anyone sees when a deployment points at the wrong address —
+        // the class name at least says whether it was refused, timed out or never resolved.
+        .map(t => s"gateway unreachable at ${endpoint.url}: ${describe(t)}")
+        .flatMap { resp =>
+          if resp.statusCode() != 200 then
+            // 401/403 are the two that a deployment gets wrong, and "gateway returned 401"
+            // on its own sends people to look at the model id. Name the likely cause.
+            val hint = resp.statusCode() match
+              case 401 | 403 => " — the credential was rejected; check the key and its scope"
+              case 404       => s" — nothing at ${endpoint.url}; check the base URL"
+              case _         => ""
+            Left(s"gateway returned ${resp.statusCode()}$hint: ${resp.body().take(200)}")
+          else Wire.readTurn(resp.body())
+        }
+    }
+
+  private def describe(t: Throwable): String =
+    Option(t.getMessage).filter(_.nonEmpty).getOrElse(t.getClass.getSimpleName)
 
 /** The wire format, in one place so the loop never touches JSON shapes. */
 object Wire:

@@ -128,10 +128,24 @@ file tree.
    `std.fs.resolveWithin(root, rel)`, which canonicalizes and returns `None` for
    anything escaping the workspace root. `..`, symlinks, and absolute paths
    outside the root are refused with a `ToolError`, not clamped.
-2. **Exec confinement.** `bash` runs with `cwd` = workspace root, a hard
-   `timeout` (default 120s), and — on macOS — under `sandbox-exec` with a
-   profile confining writes to the root. Network is **off** by default
-   (`--allow-net` opts in).
+2. **Exec confinement.** `bash` runs with `cwd` = workspace root and a hard
+   `timeout` (default 120s). Beyond that, what contains it depends on where the
+   agent is running, and an implementation MUST report which of the three is in
+   force rather than implying the strongest:
+   - **`sandbox-exec`** (macOS): writes confined to the root, network **off**
+     by default (`--allow-net` opts in). The agent enforces this itself.
+   - **The container runtime**: read-only root filesystem, one writable
+     workspace mount, no capabilities, and whatever network the runtime chose.
+     Fixed before the process starts and not adjustable from inside it —
+     `--allow-net` is therefore a no-op and MUST be described as one, because
+     the agent and the commands it runs share a network namespace.
+   - **Nothing** (a bare Linux process, or `--no-confine`): only `cwd` and the
+     timeout hold. Batch mode MUST warn on stderr when confinement was asked
+     for and could not be provided.
+
+   A boolean `confine` flag does not satisfy this clause. It cannot distinguish
+   "confined" from "asked for confinement on a platform that has none", and an
+   operator reads its absence as a guarantee.
 3. **Approval gates.** In REPL mode, `write_file` / `edit_file` / `bash` prompt
    before executing (`y` / `n` / `a` = always-for-this-session). In batch mode
    inside a scratch workspace they auto-allow: the matrix harness gives each
@@ -219,7 +233,43 @@ actor messages, so nothing agent-side is telegram-specific. rozum already runs
 the bridge shape (`com.rozum.telegram`, per-room ACL rosters, in-chat
 management); nadia reuses that pattern rather than inventing another.
 
-## 8. Phasing
+## 8. Deployment and the model source
+
+Two axes, independent, and neither may constrain the other.
+
+**Where the model runs.** The agent speaks one wire format — OpenAI-compatible
+`POST …/chat/completions` — so a provider is a base URL plus a credential, and
+nothing more. An implementation MUST support `local` (a gateway the operator
+runs, **no credential**, and the default), and MAY support hosted providers by
+constructing their documented URL:
+
+| | |
+|---|---|
+| `bedrock` | `https://bedrock-mantle.{region}.api.aws/v1`, bearer |
+| `vertex` | `https://{loc}-aiplatform.googleapis.com/v1/projects/{p}/locations/{loc}/endpoints/openapi`, bearer |
+
+Rules that come out of that, and that a second implementation must not
+rediscover:
+
+1. **A base URL that already carries a path is completed no further.** Only a
+   bare origin gets `/v1` appended. Vertex's route ends in `…/endpoints/openapi`
+   and appending to it yields a 404 that reads like a wrong project.
+2. **Credentials are read from a file first**, then the environment. A file is
+   not inherited by the `bash` children this agent spawns. There MUST be no
+   flag that takes a key inline — that puts it in `ps` and in shell history.
+3. **A credential is fetched per request, not per process.** Google's expire in
+   an hour, which is shorter than a long run. An ambient identity (metadata
+   server) MUST be preferred over key material where the platform offers one.
+4. **The resident-model placeholder (`local`) is refused for a hosted
+   provider**, naming `--model`. Forwarding it produces a 404 on a model name,
+   which does not say what is wrong.
+
+**Where the agent runs.** A container image is the portable unit; batch mode's
+exit codes (§4.1) are what makes it a Kubernetes `Job` rather than a Deployment.
+Manifests live in `deploy/` and the containment flags they set are what makes
+§3.2's second bullet true rather than decorative.
+
+## 9. Phasing
 
 | Phase | Content | Done when |
 |---|---|---|
@@ -227,3 +277,4 @@ management); nadia reuses that pattern rather than inventing another.
 | P1 | streaming REPL, approval gates, loop breaker | interactive session usable daily |
 | P2 | subagents as actors + `/agents` commands | parent drives 2 children to completion |
 | P3 | Telegram front-end | same protocol, no agent-side changes |
+| P4 | containers + hosted providers (§8) | a task runs to completion in a container against a gateway it does not share a machine with |

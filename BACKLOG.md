@@ -124,6 +124,41 @@ Exactly the gap the Rust twin had; fixed there by `run_agent_conversation`
 supplied message list — strictly additive, `runAgent` delegates to it. The same
 shape would work upstream. Not filed yet.
 
+## P4 — containers and hosted providers
+
+Shipped: the image, `deploy/k8s` · `deploy/aws` · `deploy/gcp`, and
+`--provider local|openai|bedrock|vertex` (`SPEC.md` §8, `docs/deployment.md`).
+What is left, and what was deliberately not done:
+
+### NAD-12 — no SigV4; Bedrock needs a static API key
+
+nadia authenticates to Bedrock with a bearer token (`AWS_BEARER_TOKEN_BEDROCK`),
+which means the **task role is not what grants model access** on ECS or EKS. A
+key has to exist as a secret, be rotated, and be mounted.
+
+The native AWS answer is SigV4 against the ambient role, and Google's equivalent
+is already implemented — `GoogleToken` asks the metadata server, so on GKE and
+Cloud Run there is no key material at all. AWS deserves the same and does not
+have it. Roughly 100 lines of canonical-request + HMAC chain; the reason it is
+not here is that it cannot be verified without an account, and a signing
+implementation that has never produced a valid signature is worse than an
+honest gap.
+
+### NAD-13 — the Rust implementation has no image
+
+The image packages the Scala 3 implementation, because its runtime is a JVM and
+one library. The Rust one is the reference and the one with subagents and the
+HTTP control surface — the two things that would actually justify a long-running
+container rather than a Job — but its build needs the whole rozum workspace, so
+its Dockerfile belongs in that repository and not this one.
+
+### NAD-14 — no live run against Bedrock or Vertex
+
+The URL construction is unit-tested against each vendor's documented shape and
+nothing more. No request has been made to either, and no manifest here has been
+applied to a real cluster. `docs/deployment.md` says so in the same words; do
+not let this line disappear before a real run replaces it.
+
 ## P2+
 
 - NAD-8 — subagents as actors over `std.actors` (`SPEC.md` §6).

@@ -1,6 +1,7 @@
 package nadia.rozum
 
 import agent.{Endpoint, HttpModelClient, ModelClient}
+import java.time.Duration
 
 /** How this agent finds the rozum gateway.
   *
@@ -30,5 +31,9 @@ object Gateway:
     */
   def modelFromEnv(): String = sys.env.getOrElse("NADIA_MODEL", "local")
 
-  def client(url: String, model: String): ModelClient =
-    HttpModelClient(Endpoint(Endpoint.withV1(url), model))
+  /** The read timeout is generous because the first request to a cold gateway pays for
+    * loading the weights, and a hosted endpoint under load can be slower still. Being
+    * impatient here turns a slow start into a reported model failure.
+    */
+  def client(endpoint: Endpoint): ModelClient =
+    HttpModelClient(endpoint, requestTimeout = Duration.ofMinutes(10))

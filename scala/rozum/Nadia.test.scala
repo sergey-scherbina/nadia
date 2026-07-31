@@ -9,7 +9,7 @@ class SandboxSuite extends munit.FunSuite:
     val dir = Files.createTempDirectory("nadia-test")
     Files.createDirectories(dir.resolve("src"))
     Files.writeString(dir.resolve("src/main.rs"), "fn main() {}")
-    Sandbox(dir.toRealPath(), confine = false)
+    Sandbox(dir.toRealPath(), confinement = Confinement.Open)
 
   test("resolves paths inside the workspace, including ones that do not exist yet") {
     val sb = workspace()
@@ -53,12 +53,48 @@ class SandboxSuite extends munit.FunSuite:
     assertEquals(r.stdout.length, 200000)
   }
 
+class ConfinementSuite extends munit.FunSuite:
+
+  test("--no-confine is taken literally, and named as such") {
+    assertEquals(Confinement.select(requested = false), Confinement.Open)
+    assert(Confinement.Open.describe(false).contains("NOT confined"))
+  }
+
+  test("the mechanism reported is one that exists on this machine") {
+    // The defect this pins: a boolean `confine` that reads as a guarantee on Linux, where
+    // sandbox-exec does not exist and nothing was ever wrapped.
+    val chosen = Confinement.select(requested = true)
+    chosen match
+      case Confinement.Seatbelt => assert(Confinement.seatbeltAvailable)
+      case Confinement.Runtime  => assert(Confinement.inContainer)
+      case Confinement.Open     => assert(!Confinement.seatbeltAvailable && !Confinement.inContainer)
+  }
+
+  test("inside a container, --allow-net is described as the no-op it is") {
+    // It cannot switch on a network the runtime withheld, nor switch off one it granted.
+    List(true, false).foreach { net =>
+      assert(Confinement.Runtime.describe(net).contains("--allow-net has no effect"))
+    }
+  }
+
+  test("the seatbelt still refuses a write outside the workspace") {
+    assume(Confinement.seatbeltAvailable, "macOS only")
+    val dir = Files.createTempDirectory("nadia-jail").toRealPath()
+    val sb = Sandbox(dir, confinement = Confinement.Seatbelt)
+    assertEquals(sb.exec("echo in > inside.txt").exitCode, 0)
+    // /tmp is a symlink to /private/tmp on macOS, which is why allowing either allows both,
+    // and why neither is on the profile's allowlist.
+    val out = sb.exec("echo out > /tmp/nadia-should-not-exist")
+    assert(out.exitCode != 0, s"the seatbelt let a write out of the workspace: $out")
+    assert(!Files.exists(java.nio.file.Paths.get("/tmp/nadia-should-not-exist")))
+  }
+
 class ToolsSuite extends munit.FunSuite:
 
   private def fixture(): (Sandbox, Map[String, Tool]) =
     val dir = Files.createTempDirectory("nadia-tools")
     Files.writeString(dir.resolve("a.txt"), "alpha\nbeta\nalpha\n")
-    val sb = Sandbox(dir.toRealPath(), confine = false)
+    val sb = Sandbox(dir.toRealPath(), confinement = Confinement.Open)
     (sb, Tools.all(sb).map(t => t.name -> t).toMap)
 
   test("exposes exactly six tools") {
@@ -89,7 +125,7 @@ class ToolsSuite extends munit.FunSuite:
     // model output would either throw or silently splice a capture group.
     val dir = Files.createTempDirectory("nadia-regex")
     Files.writeString(dir.resolve("f.txt"), "value = $1 (a.b)\n")
-    val tools = Tools.all(Sandbox(dir.toRealPath(), confine = false)).map(t => t.name -> t).toMap
+    val tools = Tools.all(Sandbox(dir.toRealPath(), confinement = Confinement.Open)).map(t => t.name -> t).toMap
     val r = tools("edit_file").run(
       ujson.Obj("path" -> "f.txt", "old_string" -> "$1 (a.b)", "new_string" -> "$2 [c]")
     )
@@ -113,6 +149,28 @@ class ToolsSuite extends munit.FunSuite:
     val (_, tools) = fixture()
     val r = tools("read_file").run(ujson.Obj())
     assert(r.left.exists(_.contains("`path`")), s"the model must be told which argument: $r")
+    // null is missing, not empty — reading it as "" writes an empty file over a real one.
+    val nulled = tools("write_file").run(ujson.Obj("path" -> "n.txt", "content" -> ujson.Null))
+    assert(nulled.left.exists(_.contains("`content`")), nulled.toString)
+  }
+
+  test("a number where a string was asked for is accepted, not called missing") {
+    // Observed against Qwen3.5-4B in a container: asked to write the line count into a file,
+    // it sent {"content": 4}. The old reader answered "missing required string argument
+    // `content`" — which is false, so the model re-sent the identical call until the
+    // repetition guard killed the run. A JSON scalar has one obvious textual form.
+    val dir = Files.createTempDirectory("nadia-coerce")
+    val tools = Tools.all(Sandbox(dir.toRealPath(), confinement = Confinement.Open))
+      .map(t => t.name -> t).toMap
+    assert(tools("write_file").run(ujson.Obj("path" -> "count.txt", "content" -> 4)).isRight)
+    assertEquals(Files.readString(dir.resolve("count.txt")), "4")
+    assert(tools("write_file").run(ujson.Obj("path" -> "b.txt", "content" -> true)).isRight)
+    assertEquals(Files.readString(dir.resolve("b.txt")), "true")
+
+    // An object or an array has no single right rendering, and guessing one would put
+    // invented content into a file. Refused, and told why.
+    val obj = tools("write_file").run(ujson.Obj("path" -> "c.txt", "content" -> ujson.Obj("a" -> 1)))
+    assert(obj.left.exists(m => m.contains("must be a string") && m.contains("JSON object")), obj.toString)
   }
 
   test("an invalid regex comes back as the regex error, not as zero matches") {

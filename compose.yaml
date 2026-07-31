@@ -1,0 +1,57 @@
+# nadia, locally, in a container.
+#
+#   docker compose run --rm nadia run "add a --json flag and a test for it"
+#   docker compose run --rm nadia            # the REPL
+#
+# The workspace is a bind mount, so edits land in real files you can diff and commit — the
+# point of running an agent at all. Everything else here is containment, and each line of it
+# is doing something:
+#
+#   read_only          the image cannot be modified, so a command cannot leave anything
+#                      behind outside the one writable mount
+#   cap_drop: ALL      no capabilities; there is nothing here that needs one
+#   no-new-privileges  a setuid binary in the image cannot escalate
+#   user               files appear on the host owned by you, not by root
+#
+# One thing this CANNOT do, stated plainly: the agent and the commands it runs share a
+# network namespace. If nadia can reach the model, so can `bash`. `--allow-net` is therefore
+# meaningless in here, and nadia says so at startup instead of implying otherwise. Restricting
+# egress to the model endpoint alone is a job for the layer that owns the network — see
+# deploy/k8s/networkpolicy.yaml, which does exactly that.
+
+services:
+  nadia:
+    build:
+      context: .
+    image: nadia:dev
+    init: true
+
+    # Where the agent may act. Point it at the repository you want worked on:
+    #   NADIA_WORKSPACE=~/src/my-project docker compose run --rm nadia run "…"
+    volumes:
+      - "${NADIA_WORKSPACE:-./workspace}:/workspace"
+
+    # A gateway on the host, which is where rozum runs. Override for anything else:
+    #   OPENAI_BASE_URL=https://gateway.internal/v1 docker compose run --rm nadia …
+    environment:
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-http://host.docker.internal:8080/v1}"
+      NADIA_MODEL: "${NADIA_MODEL:-local}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    # Match the host user so the files the agent writes are yours. On Linux:
+    #   NADIA_UID=$(id -u) NADIA_GID=$(id -g) docker compose run --rm nadia …
+    user: "${NADIA_UID:-1000}:${NADIA_GID:-1000}"
+
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - "no-new-privileges:true"
+    # A read-only root still needs somewhere for the JVM's scratch files and for anything
+    # the toolchain puts in $HOME. Both are tmpfs: they exist for the run and no longer.
+    tmpfs:
+      - "/tmp:mode=1777"
+      - "/home/nadia:mode=1777"
+
+    stdin_open: true
+    tty: true
