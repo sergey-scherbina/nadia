@@ -3,9 +3,26 @@
 Ordered by what blocks P0. Items marked **upstream** belong to a sibling repo
 and are filed there; they are listed here because nadia is blocked on them.
 
-## Blocking P0
+## Upstream
 
-### NAD-1 — `std.process.exec` is unbound on the standard lane (**upstream: scalascript**)
+### NAD-1 — ~~`std.process.exec` is unbound on the standard lane~~ **NOT A DEFECT — this report was wrong**
+
+**Retracted 2026-07-31.** scalascript fixed this on 2026-07-30 in `f101312ed`
+(*"implement `exec` on the native tier — std.process was missing from the DEFAULT
+lane"*), whose commit message quotes the same `unbound global: exec` error.
+
+The measurement below was taken against a toolchain built at `ff493301c` — i.e.
+**before** that commit — with `SSC_NO_BUILD_CHECK=1` set, which silences the
+launcher's own staleness warning: *"this toolchain was built from …, anything you
+measure with it is the old code."* The warning existed for exactly this case and
+was suppressed. Rebuild (`./install.sh --dev`) before re-testing anything here.
+
+The original report is kept below rather than deleted: what it got wrong is more
+useful than a clean file.
+
+---
+
+<details><summary>Original (incorrect) report</summary>
 
 `bash` is one of the six tools and cannot be written without it.
 
@@ -37,13 +54,24 @@ Workaround if the fix is deferred: a ```scala passthrough block wrapping
 `java.lang.ProcessBuilder`, confined to the JVM target — acceptable to unblock,
 not acceptable to ship.
 
-### NAD-2 — no stdin primitive for the REPL (**upstream: scalascript**)
+</details>
 
-`std.os` exposes `env` / `args` / `cwd` but nothing that reads a line from
-stdin, so the interactive mode has no input source. Same shape as NAD-1: add a
-`readLine` extern alongside the existing `os` intrinsics.
+### NAD-2 — no stdin primitive for the REPL (**upstream: scalascript — FILED**)
 
-Workaround: ```scala passthrough (`scala.io.StdIn.readLine`) on the JVM target.
+`std.os` exposes `env` / `args` / `cwd` but nothing that reads a line from stdin,
+so the interactive mode has no input source. Verified 2026-07-31 against
+`scalascript@983b520ce`: the only occurrence of `readLine` in the tree is a
+comment in `runtime/std/free.ssc:97`.
+
+Filed on their board as `std-has-no-stdin-primitive` (`scalascript:BUGS.md`,
+`lane: multi`, `kind: feature`, commit `6e80fee1f`) with the proposed surface
+`extern def readLine(): Option[String]` and `f101312ed` named as the template.
+**Do not implement it here** — this is theirs to land, and a local workaround
+would diverge from whatever they ship.
+
+No workaround exists on the standard lane: a ```scala passthrough does not give
+JVM interop there (`unbound global: java`), and reading stdin through
+`exec` inherits no terminal.
 
 ## P0
 
