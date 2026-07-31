@@ -1,0 +1,239 @@
+---
+name: nadia-tools
+version: 0.1.0
+description: The six tools nadia gives the model, and the sandbox they act in.
+package: nadia.tools
+exports:
+  - Sandbox
+  - nadiaTools
+  - resolveIn
+---
+
+# nadia.tools — six tools, and the blast radius around them
+
+The bar for a seventh tool: it must enable a task class that is *impossible* with
+these six, not merely more convenient. Every tool costs schema tokens in every
+request of every step and dilutes selection for a small model.
+
+The SDK never performs a side effect — every effect goes through a handler here,
+and every handler validates first. That is what makes it safe to point a small,
+unpredictable local model at a filesystem.
+
+[agentTool, toolOk, toolError, objectSchema, AgentTool](std/agent.ssc)
+[jsonValue, jStr, jNum, jBool, jField, jObj, jArr](std/json.ssc)
+[readFile, writeFile, exists, isDir, listDir, mkdirs, resolveWithin](std/fs.ssc)
+[exec, ProcessOptions, ProcessResult](std/process.ssc)
+
+```scalascript
+/** Where the agent may act, and how far. */
+case class Sandbox(
+  root:      String,
+  allowNet:  Boolean = false,
+  timeoutMs: Int     = 120000
+)
+
+/** Byte ceiling for one tool result. A `cargo test` on a broken crate can emit
+  * megabytes; feeding that back burns the context window in one step. Truncation is
+  * always announced — a silent cut makes the model confidently wrong about what it saw. */
+val maxOut = 8000
+
+def clip(s: String): String =
+  if s.length <= maxOut then s else s.substring(0, maxOut)
+
+def wasClipped(s: String): Boolean = s.length > maxOut
+
+/** Resolve a model-supplied path against the workspace, or refuse.
+  *
+  * Escapes are REFUSED, never clamped: a jail that strips `..` turns `../secrets`
+  * into `<root>/secrets` and writes somewhere nobody asked for. */
+def resolveIn(sb: Sandbox, rel: String): Option[String] =
+  if rel.trim() == "" then None else resolveWithin(sb.root, rel)
+
+def strArg(argsJson: String, key: String): String =
+  jsonValue(argsJson).get(key).asString
+
+def schema1(name: String, desc: String): String =
+  jObj(List(jField(name, jObj(List(
+    jField("type", jStr("string")),
+    jField("description", jStr(desc))
+  )))))
+
+def prop(t: String, desc: String): String =
+  jObj(List(jField("type", jStr(t)), jField("description", jStr(desc))))
+
+def readFileTool(sb: Sandbox): AgentTool =
+  agentTool(
+    "read_file",
+    "Read a text file from the workspace. Read a file before editing it — `edit_file` " +
+      "needs `old_string` to match the file exactly.",
+    objectSchema(
+      jObj(List(jField("path", prop("string", "Path relative to the workspace root.")))),
+      List("path")
+    )
+  ) { argsJson =>
+    val path = strArg(argsJson, "path")
+    resolveIn(sb, path) match
+      case None => toolError("path " + path + " is outside the workspace — refused")
+      case Some(full) =>
+        if !exists(full) then toolError("read " + path + ": no such file")
+        else
+          val text = readFile(full)
+          toolOk(jObj(List(
+            jField("path", jStr(path)),
+            jField("content", jStr(clip(text))),
+            jField("truncated", jBool(wasClipped(text)))
+          )))
+  }
+
+def writeFileTool(sb: Sandbox): AgentTool =
+  agentTool(
+    "write_file",
+    "Create a file, or replace its entire contents. Use `edit_file` to change part of " +
+      "an existing file — writing a whole file to change one line loses everything you " +
+      "did not repeat.",
+    objectSchema(
+      jObj(List(
+        jField("path", prop("string", "Path relative to the workspace root.")),
+        jField("content", prop("string", "The complete new contents of the file."))
+      )),
+      List("path", "content")
+    )
+  ) { argsJson =>
+    val path = strArg(argsJson, "path")
+    val content = strArg(argsJson, "content")
+    resolveIn(sb, path) match
+      case None => toolError("path " + path + " is outside the workspace — refused")
+      case Some(full) =>
+        writeFile(full, content)
+        toolOk(jObj(List(jField("written", jStr(path)), jField("bytes", jNum(content.length.toString)))))
+  }
+
+def editFileTool(sb: Sandbox): AgentTool =
+  agentTool(
+    "edit_file",
+    "Replace one exact occurrence of `old_string` with `new_string`. `old_string` must " +
+      "appear EXACTLY ONCE — include enough surrounding context to make it unique. If it " +
+      "matches zero or several times the edit is refused and nothing changes.",
+    objectSchema(
+      jObj(List(
+        jField("path", prop("string", "Path relative to the workspace root.")),
+        jField("old_string", prop("string", "Text to replace, copied exactly from the file.")),
+        jField("new_string", prop("string", "Replacement text."))
+      )),
+      List("path", "old_string", "new_string")
+    )
+  ) { argsJson =>
+    val path = strArg(argsJson, "path")
+    val oldS = strArg(argsJson, "old_string")
+    val newS = strArg(argsJson, "new_string")
+    resolveIn(sb, path) match
+      case None => toolError("path " + path + " is outside the workspace — refused")
+      case Some(full) =>
+        if !exists(full) then toolError("read " + path + ": no such file")
+        else
+          val text = readFile(full)
+          val hits = countOccurrences(text, oldS)
+          // The single-occurrence rule is the whole point of this tool: replacing the
+          // first of several identical lines lets a model report success for a fix it
+          // did not make.
+          if hits == 0 then
+            toolError("old_string matched 0 times in " + path +
+              " — re-read the file: the text you quoted is not there (check whitespace and indentation).")
+          else if hits > 1 then
+            toolError("old_string matched " + hits.toString + " times in " + path +
+              " — it must match exactly once. Include more surrounding lines to make it unique.")
+          else
+            writeFile(full, replaceFirst(text, oldS, newS))
+            toolOk(jObj(List(jField("path", jStr(path)), jField("replaced", jNum("1")))))
+  }
+
+def listDirTool(sb: Sandbox): AgentTool =
+  agentTool(
+    "list_dir",
+    "List the entries of a directory in the workspace.",
+    objectSchema(
+      jObj(List(jField("path", prop("string", "Directory relative to the workspace root.")))),
+      List()
+    )
+  ) { argsJson =>
+    val raw = strArg(argsJson, "path")
+    val path = if raw == "" then "." else raw
+    resolveIn(sb, path) match
+      case None => toolError("path " + path + " is outside the workspace — refused")
+      case Some(full) =>
+        if !isDir(full) then toolError("list " + path + ": not a directory")
+        else toolOk(jObj(List(
+          jField("path", jStr(path)),
+          jField("entries", jArr(listDir(full).map(e => jStr(e))))
+        )))
+  }
+
+def bashTool(sb: Sandbox): AgentTool =
+  agentTool(
+    "bash",
+    "Run a shell command in the workspace and return its output. This is how you build, " +
+      "test and run things (`cargo build`, `cargo test`, `cargo run`). Read the output " +
+      "before claiming success — a command that failed did not do what you asked.",
+    objectSchema(
+      jObj(List(jField("command", prop("string", "Shell command line to run.")))),
+      List("command")
+    )
+  ) { argsJson =>
+    val command = strArg(argsJson, "command")
+    val r = exec("/bin/bash", List("-lc", command),
+      ProcessOptions(cwd = Some(sb.root), timeout = Some(sb.timeoutMs)))
+    toolOk(jObj(List(
+      jField("exit_code", jNum(r.exitCode.toString)),
+      jField("stdout", jStr(clip(r.stdout))),
+      jField("stderr", jStr(clip(r.stderr))),
+      jField("truncated", jBool(wasClipped(r.stdout) || wasClipped(r.stderr)))
+    )))
+  }
+
+def grepTool(sb: Sandbox): AgentTool =
+  agentTool(
+    "grep",
+    "Search the workspace for text. Returns `path:line:text` for each match. Use it to " +
+      "find where something is defined before reading a file.",
+    objectSchema(
+      jObj(List(
+        jField("pattern", prop("string", "Text to search for.")),
+        jField("path", prop("string", "File or directory to search. Defaults to the workspace."))
+      )),
+      List("pattern")
+    )
+  ) { argsJson =>
+    val pattern = strArg(argsJson, "pattern")
+    // Delegated to `grep` rather than reimplemented: walking the tree in .ssc would be
+    // slower and would still have to grow the skip list (target/, .git/) this already has.
+    val r = exec("/bin/bash",
+      List("-lc", "grep -rn --exclude-dir=target --exclude-dir=.git -- \"$1\" . || true", "_", pattern),
+      ProcessOptions(cwd = Some(sb.root), timeout = Some(30000)))
+    toolOk(jObj(List(
+      jField("pattern", jStr(pattern)),
+      jField("matches", jStr(clip(r.stdout))),
+      jField("truncated", jBool(wasClipped(r.stdout)))
+    )))
+  }
+
+/** How many times `needle` occurs in `hay`. */
+def countOccurrences(hay: String, needle: String): Int =
+  if needle == "" then 0
+  else
+    var count = 0
+    var idx = hay.indexOf(needle)
+    while idx >= 0 do
+      count = count + 1
+      idx = hay.indexOf(needle, idx + needle.length)
+    count
+
+/** Replace the first occurrence only — the caller has already proven there is exactly one. */
+def replaceFirst(hay: String, needle: String, replacement: String): String =
+  val i = hay.indexOf(needle)
+  if i < 0 then hay
+  else hay.substring(0, i) + replacement + hay.substring(i + needle.length)
+
+/** The six, in the order a task tends to need them. */
+def nadiaTools(sb: Sandbox): List[AgentTool] =
+  List(readFileTool(sb), writeFileTool(sb), editFileTool(sb), listDirTool(sb), grepTool(sb), bashTool(sb))
+```

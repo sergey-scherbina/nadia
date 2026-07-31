@@ -1,0 +1,146 @@
+---
+name: nadia
+version: 0.1.0
+description: A coding agent on a local model — batch CLI and interactive REPL.
+---
+
+# nadia
+
+Two front-ends over one loop. `nadia run <task>` works headlessly in the current
+directory; `nadia chat` opens a line-based session. The loop, streaming, retry and
+schema derivation come from `std.agent`; the per-family tool dialect stays in the
+rozum gateway. What lives here is what an application owns: tools, prompts, safety
+policy, and the interface.
+
+[AgentEndpoint, RunOptions, runAgent, AgentResult](std/agent.ssc)
+[Sandbox, nadiaTools](tools.ssc)
+[args, env, envOrElse, cwd, exit, readLine](std/os.ssc)
+
+```scalascript
+/** What the model is told before anything else.
+  *
+  * Deliberately short: a small local model follows five rules better than a page of
+  * them, and every token here is re-sent on every step of every turn. */
+def systemPrompt(root: String): String =
+  "You are nadia, a coding agent working in " + root + ".\n" +
+  "\n" +
+  "Work by calling tools, not by describing what should be done. When the task needs " +
+  "a file changed, change it; do not print the file and stop.\n" +
+  "\n" +
+  "Before you claim a task is finished, verify it: run the build, the test, or the " +
+  "program with `bash` and read the output. If the command failed, the task is not " +
+  "finished — fix it and run it again. Never report success you have not observed.\n" +
+  "\n" +
+  "Read a file before editing it, and quote `old_string` exactly as it appears. Make " +
+  "the smallest change that satisfies the task.\n" +
+  "\n" +
+  "When the task is genuinely done, reply with a short plain-text summary. That final " +
+  "message ends the task, so do not send it while work remains."
+
+/** `std.agent` appends `/v1/chat/completions` itself (`agent.ssc:361`), so what it wants
+  * is the BARE origin. The environment hands us both spellings — `rozum launch` exports
+  * `OPENAI_BASE_URL` with `/v1` and `ROZUM_GATEWAY_URL` without — so strip it rather than
+  * make the caller know which variable they happened to set.
+  *
+  * This is the opposite of what the Rust twin does: `OpenAiHttpBackend` there takes the
+  * base WITH `/v1`. Same URL, two conventions, and getting it backwards is a 404 with an
+  * empty body — which is what it cost the first time. */
+def bareOrigin(url: String): String =
+  val t = if url.endsWith("/") then url.substring(0, url.length - 1) else url
+  if t.endsWith("/v1") then t.substring(0, t.length - 3) else t
+
+def defaultGateway(): String =
+  env("OPENAI_BASE_URL") match
+    case Some(u) => bareOrigin(u)
+    case None =>
+      env("ROZUM_GATEWAY_URL") match
+        case Some(u) => bareOrigin(u)
+        case None    => "http://127.0.0.1:8080"
+
+val usage =
+  "nadia — a coding agent on a local model\n" +
+  "\n" +
+  "USAGE:\n" +
+  "    nadia run <task>   run one task headlessly in the current directory\n" +
+  "    nadia chat         interactive session (default with no arguments)\n" +
+  "\n" +
+  "ENV:\n" +
+  "    OPENAI_BASE_URL / ROZUM_GATEWAY_URL   where the gateway is\n" +
+  "    NADIA_MODEL                           model id to ask it for\n" +
+  "\n" +
+  "EXIT CODES (batch):  0 finished   1 budget exhausted   2 gateway failure"
+
+/** One line per executed tool call — what it did, not the raw JSON of what came back. */
+def renderOps(r: AgentResult): Unit =
+  for op <- r.operations do
+    val mark = if op.isError then "  ✗ " else "  ⏺ "
+    println(mark + op.tool + " " + firstLine(op.argsJson))
+
+def firstLine(s: String): String =
+  val cut = if s.length > 96 then s.substring(0, 96) + "…" else s
+  cut.replace("\n", " ")
+
+def runOnce(sb: Sandbox, endpoint: AgentEndpoint, model: String, task: String, maxSteps: Int): AgentResult =
+  runAgent(endpoint, model, systemPrompt(sb.root), task, nadiaTools(sb),
+           RunOptions(temperature = 0.0, maxSteps = maxSteps))
+
+/** The interactive front-end. Line-based on purpose: it works over ssh, in a pipe and
+  * inside tmux without a terminal-control layer, and what a coding agent's UI has to get
+  * right is showing WHAT IT DID, not drawing panes.
+  *
+  * Each turn is independent: `std.agent` exposes no entry point that resumes an existing
+  * transcript, so context does not yet carry across turns here. The Rust twin has one
+  * (`run_agent_conversation`); the same addition is wanted upstream — see NAD-11. */
+def repl(sb: Sandbox, endpoint: AgentEndpoint, model: String, maxSteps: Int): Unit =
+  println("nadia · " + model + " · " + sb.root)
+  println("6 tools · /help for commands · ctrl-d to exit")
+  var running = true
+  while running do
+    print("\n› ")
+    readLine() match
+      case None => running = false
+      case Some(raw) =>
+        val line = raw.trim()
+        if line == "" then ()
+        else if line == "/quit" || line == "/exit" then running = false
+        else if line == "/help" then
+          println("/tools  list the tools\n/quit   exit")
+        else if line == "/tools" then
+          for t <- nadiaTools(sb) do println("  " + t.name)
+        else
+          val r = runOnce(sb, endpoint, model, line, maxSteps)
+          renderOps(r)
+          if r.text != "" then println("\n" + r.text)
+          if r.stop != "Done" then println("[stopped: " + r.stop + "]")
+
+val argv = args
+val mode = if argv.length == 0 then "chat" else argv(0)
+val root = cwd
+val sb = Sandbox(root)
+val model = envOrElse("NADIA_MODEL", "local")
+val endpoint = AgentEndpoint(defaultGateway())
+val maxSteps = 24
+
+if mode == "-h" || mode == "--help" then
+  println(usage)
+else if mode == "chat" then
+  repl(sb, endpoint, model, maxSteps)
+else if mode == "run" then
+  if argv.length < 2 then
+    println("nadia run needs a task\n\n" + usage)
+    exit(2)
+  else
+    val task = argv.drop(1).mkString(" ")
+    val r = runOnce(sb, endpoint, model, task, maxSteps)
+    renderOps(r)
+    println(r.text)
+    // The three values std.agent can return (agent.ssc): Done / MaxSteps / Error.
+    // Mapped onto the exit codes scripts/bench/agentic.sh already distinguishes, where
+    // rc=2 means infrastructure rather than a model that gave up.
+    if r.stop == "Done" then exit(0)
+    else if r.stop == "Error" then exit(2)
+    else exit(1)
+else
+  println("unknown mode `" + mode + "`\n\n" + usage)
+  exit(2)
+```

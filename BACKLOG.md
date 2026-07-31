@@ -98,11 +98,11 @@ Status below is for the **ScalaScript** implementation. The Rust twin
 of NAD-6 done and verified end-to-end on Qwen3.5-4B; port against it, and where
 the two disagree, `SPEC.md` decides.
 
-- NAD-3 — the six tools (`SPEC.md` §2) with the sandbox of §3.1–3.2.
-  Unblocked: `std.process.exec` works on the standard lane since `f101312ed`
-  (rebuild the toolchain first — see NAD-1).
-- NAD-4 — batch CLI (`SPEC.md` §4.1), exit codes 0/1/2.
-- NAD-5 — REPL (`SPEC.md` §4.2), slash commands. Unblocked (NAD-2 fixed upstream).
+- [x] NAD-3 — the six tools + sandbox — `src/tools.ssc`. Path jail via
+  `fs.resolveWithin`, `bash` via `process.exec` with a timeout.
+- [x] NAD-4 — batch CLI — `src/nadia.ssc`. Verified end-to-end on Qwen3.5-4B:
+  wrote the file, verified it with `bash`, exit 0.
+- [x] NAD-5 — REPL on `os.readLine`, `/help` and `/tools`, EOF exits.
 - NAD-6 — approval gates (§3.3) and budgets/loop-breaker (§3.4–3.5).
 - NAD-7 — first matrix row (`SPEC.md` §5). **No launcher change needed**: the
   Rust twin established that `rozum launch` already exports `OPENAI_BASE_URL`
@@ -111,6 +111,18 @@ the two disagree, `SPEC.md` decides.
 - NAD-10 — token streaming in the REPL (`SPEC.md` P1). Both sides have what
   they need: `std.agent` has `runAgentStream`, and the Rust twin now streams via
   `rozum-agent`'s `AgentObserver`. Port the rendering, not the mechanism.
+
+### NAD-11 — `std.agent` cannot resume a transcript (**upstream: scalascript**)
+
+`runAgent` always starts from `[system, user]`, and nothing public accepts an
+existing conversation — `AgentResult.transcriptJson` comes back but has nowhere to
+go. So each REPL turn here is independent: the agent has no memory of the previous
+one, and the gateway re-prefills instead of reusing its KV prefix.
+
+Exactly the gap the Rust twin had; fixed there by `run_agent_conversation`
+(`rozum:crates/rozum-agent/src/agent.rs`), which is the same loop entered with a
+supplied message list — strictly additive, `runAgent` delegates to it. The same
+shape would work upstream. Not filed yet.
 
 ## P2+
 
