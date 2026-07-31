@@ -24,11 +24,17 @@ sits underneath them.
 The Scala 3 one exists to answer a question the other two cannot: *how much of an agent is
 the framework?* It has no external SDK — so it grew its own, and the split is the answer:
 
-| | lines |
-|---|---|
-| `scala/sdk/` — model client, agent loop, tool type, loop guard (Contracts 1–3) | 330 |
-| `scala/` — sandbox, the six tools, the prompt, CLI and REPL | 534 |
-| tests | 313 |
+| layer | package | lines |
+|---|---|---|
+| `scala/sdk/` — model client, agent loop, tool type, loop guard (Contracts 1–3) | `agent` | 323 |
+| `scala/rozum/` — sandbox, the six tools, the prompt, gateway wiring, both front-ends | `nadia.rozum` | 510 |
+| `scala/Main.scala` — arguments in, exit code out | `nadia` | 93 |
+| tests | | 313 |
+
+The three layers are a dependency chain, not a filing convention: `agent` knows nothing
+about rozum or about nadia; `nadia.rozum` knows both; `Main` knows only how to read a
+command line. The one place the split is checkable is the SDK's imports — nothing in
+`scala/sdk/` names an environment variable, a tool, or a gateway.
 
 The generic half is 330 lines. That is the whole of what `rozum-agent` and `std.agent`
 provide to the other two implementations, and it is smaller than the domain code that sits

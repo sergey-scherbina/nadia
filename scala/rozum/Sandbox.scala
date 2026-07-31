@@ -1,4 +1,4 @@
-package nadia
+package nadia.rozum
 
 import java.nio.file.{Files, Path, Paths}
 import java.util.concurrent.TimeUnit
@@ -16,7 +16,7 @@ import scala.util.Try
 final case class Sandbox(
     root: Path,
     allowNet: Boolean = false,
-    confine: Boolean = System.getProperty("os.name").toLowerCase.contains("mac"),
+    confine: Boolean = Sandbox.seatbeltAvailable,
     timeout: java.time.Duration = java.time.Duration.ofSeconds(120)
 ):
 
@@ -109,6 +109,11 @@ final case class Sandbox(
 final case class Exec(stdout: String, stderr: String, exitCode: Int, timedOut: Boolean)
 
 object Sandbox:
+  /** Seatbelt is macOS-only; on anything else the confinement flag is a promise that
+    * cannot be kept, and pretending otherwise is worse than admitting it.
+    */
+  val seatbeltAvailable: Boolean = System.getProperty("os.name").toLowerCase.contains("mac")
+
   def at(dir: String): Either[String, Sandbox] =
     val p = Paths.get(dir)
     if !Files.isDirectory(p) then Left(s"workspace root $dir is not a directory")

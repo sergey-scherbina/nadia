@@ -24,21 +24,14 @@ final case class Endpoint(baseUrl: String, model: String):
   val url: String = s"${Endpoint.withV1(baseUrl)}/chat/completions"
 
 object Endpoint:
-  /** The environment hands out two spellings of the same URL — `rozum launch` exports
-    * `OPENAI_BASE_URL` with `/v1` and `ROZUM_GATEWAY_URL` without — so normalize instead of
-    * making the caller know which variable they happened to set. Getting it wrong is a 404
-    * with an empty body, which reads like anything but a path problem.
+  /** OpenAI-compatible base URLs circulate in two spellings, with and without the `/v1`
+    * segment, and callers rarely know which one they were handed. Normalize rather than
+    * make them care: getting it wrong is a 404 with an empty body, which reads like
+    * anything except a path problem.
     */
   def withV1(u: String): String =
     val t = u.stripSuffix("/")
     if t.endsWith("/v1") then t else s"$t/v1"
-
-  def fromEnv(): String =
-    sys.env
-      .get("OPENAI_BASE_URL")
-      .orElse(sys.env.get("ROZUM_GATEWAY_URL"))
-      .map(withV1)
-      .getOrElse("http://127.0.0.1:8080/v1")
 
 /** An OpenAI-compatible gateway over HTTP: `POST /v1/chat/completions`.
   *

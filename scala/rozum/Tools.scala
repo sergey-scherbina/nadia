@@ -1,4 +1,4 @@
-package nadia
+package nadia.rozum
 
 import agent.{Args, Schema, Tool}
 import java.nio.file.{Files, Path}

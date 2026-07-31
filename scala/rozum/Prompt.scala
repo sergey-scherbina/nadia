@@ -1,4 +1,4 @@
-package nadia
+package nadia.rozum
 
 /** What the model is told before anything else.
   *
