@@ -63,9 +63,14 @@ so the interactive mode has no input source. Verified 2026-07-31 against
 `scalascript@983b520ce`: the only occurrence of `readLine` in the tree is a
 comment in `runtime/std/free.ssc:97`.
 
-Filed on their board as `std-has-no-stdin-primitive` (`scalascript:BUGS.md`,
-`lane: multi`, `kind: feature`, commit `6e80fee1f`) with the proposed surface
-`extern def readLine(): Option[String]` and `f101312ed` named as the template.
+Reported upstream as **[scalascript#76](https://github.com/sergey-scherbina/scalascript/issues/76)**
+via their `user-report` form, which their `POLICY.md` P-3.10 makes the front door
+of the inbound queue. The form asks reporters *not* to diagnose, so the proposed
+surface (`extern def readLine(): Option[String]`, `None` at EOF) and the
+implementation order live in the `scalascript:BUGS.md` entry
+`std-has-no-stdin-primitive` instead, which now points at #76; their triage owns
+which of the two survives.
+
 **Do not implement it here** — this is theirs to land, and a local workaround
 would diverge from whatever they ship.
 
@@ -81,7 +86,8 @@ of NAD-6 done and verified end-to-end on Qwen3.5-4B; port against it, and where
 the two disagree, `SPEC.md` decides.
 
 - NAD-3 — the six tools (`SPEC.md` §2) with the sandbox of §3.1–3.2.
-  Blocked on NAD-1 for `bash`; the other five are unblocked.
+  Unblocked: `std.process.exec` works on the standard lane since `f101312ed`
+  (rebuild the toolchain first — see NAD-1).
 - NAD-4 — batch CLI (`SPEC.md` §4.1), exit codes 0/1/2.
 - NAD-5 — REPL (`SPEC.md` §4.2), slash commands. Blocked on NAD-2.
 - NAD-6 — approval gates (§3.3) and budgets/loop-breaker (§3.4–3.5).
