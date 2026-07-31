@@ -30,10 +30,12 @@ object Main:
       |    --json                batch: print the full result as JSON
       |
       |WHERE THE MODEL RUNS:
-      |    --provider <NAME>     local | openai | bedrock | vertex   [env: NADIA_PROVIDER]
+      |    --provider <NAME>     local | openai | huggingface | bedrock | vertex
+      |                                                              [env: NADIA_PROVIDER]
       |    --region <ID>         AWS region, or Vertex location      [env: AWS_REGION / GOOGLE_CLOUD_REGION]
       |    --project <ID>        Google Cloud project                [env: GOOGLE_CLOUD_PROJECT]
       |    --api-key-file <F>    bearer token, read from a file      [env: NADIA_API_KEY / OPENAI_API_KEY]
+      |                                                              huggingface also reads HF_TOKEN
       |
       |    `local` is the default and needs no credential. There is no --api-key flag on
       |    purpose: a key passed as an argument is in `ps` output and in shell history.

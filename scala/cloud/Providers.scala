@@ -21,7 +21,7 @@ import scala.util.Try
   */
 object Provider:
 
-  val names = List("local", "openai", "bedrock", "vertex")
+  val names = List("local", "openai", "huggingface", "bedrock", "vertex")
 
   /** Resolve the flags into one endpoint, or say exactly which flag is missing.
     *
@@ -49,6 +49,17 @@ object Provider:
           key
             .toRight("--provider openai needs a key: set NADIA_API_KEY or pass --api-key-file")
             .map(k => Endpoint(gateway, model, Auth.Bearer(k)))
+
+        // The Hub — where the local weights came from in the first place, and the reason
+        // this provider is worth having: the same catalogue, served, when the machine you
+        // are on cannot hold the model you want.
+        case "huggingface" | "hf" =>
+          for
+            k <- key
+              .orElse(env("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"))
+              .toRight("--provider huggingface needs a token: set HF_TOKEN or pass --api-key-file")
+            m <- servedByTheRouter(model)
+          yield Endpoint("https://router.huggingface.co/v1", m, Auth.Bearer(k))
 
         case "bedrock" =>
           for
@@ -81,6 +92,36 @@ object Provider:
           Left(s"unknown provider `$other` — one of ${names.mkString(", ")}")
     yield ep
 
+  /** The Hub hosts two different things under one namespace, and the difference is invisible
+    * in a model id.
+    *
+    * `mlx-community/Qwen3.5-4B-MLX-4bit` — the repository this project's local model actually
+    * comes from — is a set of weight files for a runtime you run yourself. The router serves
+    * models hosted by its partner providers, and MLX and GGUF quantizations are not among
+    * them: they exist to be downloaded, not called.
+    *
+    * Sending one anyway comes back as a model-not-found, which reads as "the Hub has lost my
+    * model" rather than "that repository is for the other path". So it is refused here,
+    * naming both ways forward. No upstream repository is guessed: `mlx-community` names are
+    * not mechanically derivable from the original, and inventing one would send the operator
+    * to a 404 of our own making.
+    */
+  private def servedByTheRouter(model: String): Either[String, String] =
+    val id = model.toLowerCase
+    val localFormat =
+      if id.startsWith("mlx-community/") || id.contains("mlx") then Some("an MLX")
+      else if id.contains("gguf") then Some("a GGUF")
+      else None
+    localFormat match
+      case None => Right(model)
+      case Some(what) =>
+        Left(
+          s"`$model` looks like $what build — those are weights to download and run yourself, " +
+            "and the Hugging Face router only serves models its partner providers host. " +
+            "Either pass the original repository (e.g. Qwen/Qwen3.5-4B-Instruct), or keep this " +
+            "one and use --provider local against a gateway that has it resident."
+        )
+
   /** `local` is the model id a caller uses to mean "whatever you have resident", which is a
     * rozum gateway idea. Sent to Bedrock or Vertex it is a 404 on a model name, and that
     * error does not say "you forgot --model".
@@ -92,6 +133,7 @@ object Provider:
         s"--provider $provider needs an explicit --model (or NADIA_MODEL) — " +
           (if provider == "bedrock" then "e.g. us.anthropic.claude-sonnet-4-6"
            else if provider == "vertex" then "e.g. google/gemini-3-flash"
+           else if provider == "huggingface" || provider == "hf" then "e.g. Qwen/Qwen3.5-4B-Instruct"
            else "the model id your endpoint serves")
       )
 

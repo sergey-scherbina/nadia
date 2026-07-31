@@ -245,6 +245,7 @@ constructing their documented URL:
 
 | | |
 |---|---|
+| `huggingface` | `https://router.huggingface.co/v1`, bearer |
 | `bedrock` | `https://bedrock-mantle.{region}.api.aws/v1`, bearer |
 | `vertex` | `https://{loc}-aiplatform.googleapis.com/v1/projects/{p}/locations/{loc}/endpoints/openapi`, bearer |
 
@@ -260,9 +261,16 @@ rediscover:
 3. **A credential is fetched per request, not per process.** Google's expire in
    an hour, which is shorter than a long run. An ambient identity (metadata
    server) MUST be preferred over key material where the platform offers one.
-4. **The resident-model placeholder (`local`) is refused for a hosted
-   provider**, naming `--model`. Forwarding it produces a 404 on a model name,
-   which does not say what is wrong.
+4. **A model id that cannot work at the endpoint is refused before it is sent**,
+   naming what to do instead. Two cases exist so far, and both come back from a
+   provider as an indistinguishable model-not-found:
+   - the resident-model placeholder `local` sent to a hosted provider — name
+     `--model`;
+   - a download-only build (`mlx-community/…`, `…-GGUF`) sent to the Hugging
+     Face router, which serves partner-hosted models only. Name both ways
+     forward: the original repository, or `--provider local` against a gateway
+     holding those weights. **Do not guess an upstream repository name** — the
+     mapping is not mechanical, and a guess is a 404 of the agent's own making.
 
 **Where the agent runs.** A container image is the portable unit; batch mode's
 exit codes (§4.1) are what makes it a Kubernetes `Job` rather than a Deployment.

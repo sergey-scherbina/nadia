@@ -53,19 +53,55 @@ a shell, and the six tools do not get safer as the image gets fatter.
 ## Where the model comes from
 
 ```
---provider local     an OpenAI-compatible gateway you run. No credential. The default.
---provider openai    any hosted OpenAI-compatible endpoint, with a bearer token.
---provider bedrock   AWS. --region, plus a Bedrock API key.
---provider vertex    Google. --project and --region; on GCP, no key at all.
+--provider local        an OpenAI-compatible gateway you run. No credential. The default.
+--provider openai       any hosted OpenAI-compatible endpoint, with a bearer token.
+--provider huggingface  the Hub's router — the same catalogue the local weights came from.
+--provider bedrock      AWS. --region, plus a Bedrock API key.
+--provider vertex       Google. --project and --region; on GCP, no key at all.
 ```
 
 The credential is read, in order, from `--api-key-file`, then `NADIA_API_KEY`, then
-`OPENAI_API_KEY`. **There is no `--api-key` flag taking the value inline**, because that
-would put the key in `ps` output and in shell history, and both outlive the run.
+`OPENAI_API_KEY` — plus the variable each provider's own tooling already uses (`HF_TOKEN`,
+`AWS_BEARER_TOKEN_BEDROCK`). **There is no `--api-key` flag taking the value inline**,
+because that would put the key in `ps` output and in shell history, and both outlive the
+run.
 
 Prefer the *file* wherever the platform can project one. Kubernetes and ECS can both hand a
 secret to a container, but a file is not inherited by child processes — and this program
 starts `bash` on a model's say-so.
+
+### Hugging Face — the Hub's router
+
+```bash
+export HF_TOKEN=hf_…
+nadia --provider huggingface --model Qwen/Qwen3.5-4B-Instruct run "…"
+```
+
+Resolves to `https://router.huggingface.co/v1/chat/completions`, the Hub's OpenAI-compatible
+endpoint, which picks a partner provider server-side. The selection policy is part of the
+model id (`:fastest`, `:cheapest`, `:preferred`, or a provider name such as `:groq`) and
+passes through untouched — it is the Hub's syntax, not ours to interpret.
+
+This is the provider that closes the loop. The local model this project was built against —
+`mlx-community/Qwen3.5-4B-MLX-4bit` — came from the Hub in the first place, and the same
+catalogue is here when the machine in front of you cannot hold the model you want. Nothing
+else changes: same six tools, same prompts, same loop.
+
+**One thing the Hub does not tell you from a model id.** It hosts two different kinds of
+repository under one namespace:
+
+| | |
+|---|---|
+| weights to **download** | `mlx-community/…`, `…-GGUF`, `…-MLX-4bit` — for a runtime you run |
+| models to **call** | what a partner provider serves through the router |
+
+`mlx-community/Qwen3.5-4B-MLX-4bit` is the first kind, so the router cannot serve it, and
+asking returns model-not-found — which reads as *the Hub lost my model* rather than *wrong
+path for this repository*. nadia refuses it up front instead, and names both ways forward:
+pass the original repository (`Qwen/Qwen3.5-4B-Instruct`), or keep those weights and point
+`--provider local` at a gateway that has them resident. It does not guess an upstream name;
+`mlx-community` ids are not mechanically derivable from the original, and a guess would send
+you to a 404 of our own making.
 
 ### AWS — Bedrock
 
@@ -217,7 +253,15 @@ That run is also what found the argument-coercion bug in
 the agent rather than in the container. Which is the argument for verifying a deployment by
 running work through it rather than by checking that it starts.
 
-**Not verified here:** no AWS or Google account was involved. The Bedrock and Vertex URL
-shapes come from each vendor's current documentation and the construction is unit-tested,
-but no request has been made to either, and no manifest here has been applied to a real
-cluster, ECS or Cloud Run. Treat them as reviewed templates, not as tested deployments.
+**Partly verified:** the Hugging Face path was exercised against the live router with a
+deliberately invalid token. The request reaches
+`https://router.huggingface.co/v1/chat/completions`, carries the bearer header, and comes
+back `401 — the credential was rejected`. That pins the URL construction, the auth header
+and the error reporting; only a valid token is missing. The refusal of
+`mlx-community/Qwen3.5-4B-MLX-4bit` was checked the same way, from the command line.
+
+**Not verified here:** no AWS, Google or Hugging Face *account* was involved, so no request
+has been answered with a completion. The Bedrock and Vertex URL shapes come from each
+vendor's current documentation and the construction is unit-tested, and nothing more than
+that. No manifest here has been applied to a real cluster, ECS or Cloud Run. Treat them as
+reviewed templates, not as tested deployments.

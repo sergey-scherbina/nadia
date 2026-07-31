@@ -52,8 +52,10 @@ docker compose run --rm nadia run "add a --json flag and a test for it"
 kubectl apply -k deploy/k8s
 ```
 
-A container image, Kubernetes Jobs, ECS and Cloud Run — and the model can stay local or
-come from Bedrock or Vertex, with `local` still the default and still credential-free.
+A container image, Kubernetes Jobs, ECS and Cloud Run — and the model can stay local or come
+from the Hugging Face router, Bedrock or Vertex, with `local` still the default and still
+credential-free. The Hub is the same place the local weights came from, which makes it the
+one line of the configuration you change when the machine in front of you is too small.
 
 The interesting part is what happens to the safety model on the way. `sandbox-exec` does not
 exist on Linux, so the agent stops claiming it: it names the mechanism actually in force,

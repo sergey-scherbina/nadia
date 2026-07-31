@@ -127,7 +127,8 @@ shape would work upstream. Not filed yet.
 ## P4 — containers and hosted providers
 
 Shipped: the image, `deploy/k8s` · `deploy/aws` · `deploy/gcp`, and
-`--provider local|openai|bedrock|vertex` (`SPEC.md` §8, `docs/deployment.md`).
+`--provider local|openai|huggingface|bedrock|vertex` (`SPEC.md` §8,
+`docs/deployment.md`).
 What is left, and what was deliberately not done:
 
 ### NAD-12 — no SigV4; Bedrock needs a static API key
@@ -152,11 +153,14 @@ HTTP control surface — the two things that would actually justify a long-runni
 container rather than a Job — but its build needs the whole rozum workspace, so
 its Dockerfile belongs in that repository and not this one.
 
-### NAD-14 — no live run against Bedrock or Vertex
+### NAD-14 — no live run against Hugging Face, Bedrock or Vertex
 
-The URL construction is unit-tested against each vendor's documented shape and
-nothing more. No request has been made to either, and no manifest here has been
-applied to a real cluster. `docs/deployment.md` says so in the same words; do
+The URL construction is unit-tested against each vendor's documented shape. The
+Hugging Face path goes further — a live request with a deliberately invalid token
+reaches the router and comes back 401, which pins the URL, the bearer header and
+the error reporting — but no account exists for any of the three, so no request
+has been answered with a completion. No manifest here has been applied to a real
+cluster. `docs/deployment.md` says so in the same words; do
 not let this line disappear before a real run replaces it.
 
 ## P2+

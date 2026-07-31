@@ -52,6 +52,34 @@ class ProviderSuite extends munit.FunSuite:
     assert(empty.left.exists(_.contains("is empty")), empty.toString)
   }
 
+  test("huggingface routes through the documented OpenAI-compatible endpoint") {
+    val ep = resolve("huggingface", model = "Qwen/Qwen3.5-4B-Instruct",
+      key = Some(keyFile("hf_token").toString)).fold(fail(_), identity)
+    assertEquals(ep.baseUrl, "https://router.huggingface.co/v1")
+    assertEquals(ep.url, "https://router.huggingface.co/v1/chat/completions")
+    assertEquals(ep.auth, Auth.Bearer("hf_token"))
+    // The provider-selection suffix the router documents is part of the model id, not ours
+    // to interpret — it must pass through untouched.
+    val pinned = resolve("hf", model = "openai/gpt-oss-120b:cheapest",
+      key = Some(keyFile("t").toString)).fold(fail(_), identity)
+    assertEquals(pinned.model, "openai/gpt-oss-120b:cheapest")
+  }
+
+  test("a local-runtime build is refused with both ways forward") {
+    // This is the repository the project's own local model comes from, and it is the id an
+    // operator will reach for first. The router serves partner-hosted models; MLX and GGUF
+    // are weights to download. Sending one returns model-not-found, which reads as "the Hub
+    // lost my model" rather than "wrong path for this repository".
+    val key = Some(keyFile("t").toString)
+    List("mlx-community/Qwen3.5-4B-MLX-4bit", "bartowski/Qwen3.5-4B-GGUF").foreach { id =>
+      val r = resolve("huggingface", model = id, key = key)
+      assert(r.left.exists(m => m.contains("--provider local") && m.contains("Qwen/Qwen3.5-4B-Instruct")),
+        s"$id: $r")
+    }
+    // The same weights are perfectly valid on the local path — that is the point of saying so.
+    assert(resolve("local", model = "mlx-community/Qwen3.5-4B-MLX-4bit").isRight)
+  }
+
   test("bedrock builds the documented endpoint") {
     val ep = resolve("bedrock", model = "us.anthropic.claude-sonnet-4-6", region = Some("us-east-1"),
       key = Some(keyFile("bedrock-key").toString)).fold(fail(_), identity)
@@ -91,6 +119,10 @@ class ProviderSuite extends munit.FunSuite:
     withoutEnv("NADIA_API_KEY", "OPENAI_API_KEY") {
       val noKey = resolve("openai", model = "gpt-4o")
       assert(noKey.left.exists(_.contains("NADIA_API_KEY")), noKey.toString)
+    }
+    withoutEnv("NADIA_API_KEY", "OPENAI_API_KEY", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN") {
+      val noToken = resolve("huggingface", model = "Qwen/Qwen3.5-4B-Instruct")
+      assert(noToken.left.exists(_.contains("HF_TOKEN")), noToken.toString)
     }
   }
 
