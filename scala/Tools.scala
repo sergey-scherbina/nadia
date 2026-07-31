@@ -1,22 +1,16 @@
 package nadia
 
+import agent.{Args, Schema, Tool}
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 import scala.util.{Try, Using}
 
-/** A tool the model may call: the schema it advertises, and the handler that runs it.
+/** nadia's six tools: what the agent may actually do to a machine.
   *
-  * `run` returns `Left(message)` for a recoverable failure. That message is not an error
-  * in the exception sense — it is the next prompt, and it is written to be read by the
-  * model: what went wrong, and what to do differently.
+  * The loop, the model client and the `Tool` type itself come from the `agent` SDK next
+  * door. What lives here is the part an SDK cannot supply — which effects exist, and what
+  * each one refuses to do.
   */
-final case class Tool(
-    name: String,
-    description: String,
-    schema: ujson.Value,
-    run: ujson.Value => Either[String, ujson.Value]
-)
-
 object Tools:
 
   /** Byte ceiling for one tool result. A `cargo test` on a broken crate emits megabytes;
@@ -28,23 +22,6 @@ object Tools:
 
   private def clip(s: String): (String, Boolean) =
     if s.length <= MaxOut then (s, false) else (s.take(MaxOut), true)
-
-  private def str(v: ujson.Value, key: String): Either[String, String] =
-    Try(v(key).str).toOption.toRight(s"missing required string argument `$key`")
-
-  private def optStr(v: ujson.Value, key: String): Option[String] =
-    Try(v(key).str).toOption
-
-  private def prop(t: String, desc: String): ujson.Value =
-    ujson.Obj("type" -> t, "description" -> desc)
-
-  private def schemaOf(props: (String, ujson.Value)*)(required: String*): ujson.Value =
-    ujson.Obj(
-      "type" -> "object",
-      "properties" -> ujson.Obj.from(props),
-      "required" -> ujson.Arr.from(required.map(ujson.Str(_))),
-      "additionalProperties" -> false
-    )
 
   /** The six tools, and nothing else.
     *
@@ -59,10 +36,10 @@ object Tools:
     "read_file",
     "Read a text file from the workspace. Read a file before editing it — `edit_file` " +
       "needs `old_string` to match the file exactly.",
-    schemaOf("path" -> prop("string", "Path relative to the workspace root."))("path"),
+    Schema.obj("path" -> Schema.prop("string", "Path relative to the workspace root."))("path"),
     args =>
       for
-        p <- str(args, "path")
+        p <- Args.str(args, "path")
         full <- sb.resolve(p)
         text <- Try(Files.readString(full)).toEither.left.map(e => s"read $p: ${e.getMessage}")
       yield
@@ -78,14 +55,14 @@ object Tools:
     "Create a file, or replace its entire contents. Use `edit_file` to change part of an " +
       "existing file — writing a whole file to change one line loses everything you did " +
       "not repeat.",
-    schemaOf(
-      "path" -> prop("string", "Path relative to the workspace root."),
-      "content" -> prop("string", "The complete new contents of the file.")
+    Schema.obj(
+      "path" -> Schema.prop("string", "Path relative to the workspace root."),
+      "content" -> Schema.prop("string", "The complete new contents of the file.")
     )("path", "content"),
     args =>
       for
-        p <- str(args, "path")
-        content <- str(args, "content")
+        p <- Args.str(args, "path")
+        content <- Args.str(args, "content")
         full <- sb.resolve(p)
         _ <- Try {
           Option(full.getParent).foreach(Files.createDirectories(_))
@@ -99,16 +76,16 @@ object Tools:
     "Replace one exact occurrence of `old_string` with `new_string`. `old_string` must " +
       "appear EXACTLY ONCE — include enough surrounding context to make it unique. If it " +
       "matches zero or several times the edit is refused and nothing changes.",
-    schemaOf(
-      "path" -> prop("string", "Path relative to the workspace root."),
-      "old_string" -> prop("string", "Text to replace, copied exactly from the file."),
-      "new_string" -> prop("string", "Replacement text.")
+    Schema.obj(
+      "path" -> Schema.prop("string", "Path relative to the workspace root."),
+      "old_string" -> Schema.prop("string", "Text to replace, copied exactly from the file."),
+      "new_string" -> Schema.prop("string", "Replacement text.")
     )("path", "old_string", "new_string"),
     args =>
       for
-        p <- str(args, "path")
-        oldS <- str(args, "old_string")
-        newS <- str(args, "new_string")
+        p <- Args.str(args, "path")
+        oldS <- Args.str(args, "old_string")
+        newS <- Args.str(args, "new_string")
         full <- sb.resolve(p)
         text <- Try(Files.readString(full)).toEither.left.map(e => s"read $p: ${e.getMessage}")
         // The single-occurrence rule is the whole point of this tool: replacing the first
@@ -133,9 +110,9 @@ object Tools:
   private def listDir(sb: Sandbox) = Tool(
     "list_dir",
     "List the entries of a directory in the workspace.",
-    schemaOf("path" -> prop("string", "Directory relative to the workspace root."))(),
+    Schema.obj("path" -> Schema.prop("string", "Directory relative to the workspace root."))(),
     args =>
-      val p = optStr(args, "path").filter(_.nonEmpty).getOrElse(".")
+      val p = Args.optStr(args, "path").getOrElse(".")
       for
         full <- sb.resolve(p)
         entries <- Try(Using.resource(Files.list(full))(_.iterator.asScala.toList))
@@ -154,19 +131,19 @@ object Tools:
     "grep",
     "Search the workspace with a regular expression. Returns `path:line:text` for each " +
       "match. Use it to find where something is defined before reading a file.",
-    schemaOf(
-      "pattern" -> prop("string", "Regular expression, e.g. `fn \\w+_handler` or `TODO`."),
-      "path" -> prop("string", "File or directory to search. Defaults to the workspace.")
+    Schema.obj(
+      "pattern" -> Schema.prop("string", "Regular expression, e.g. `fn \\w+_handler` or `TODO`."),
+      "path" -> Schema.prop("string", "File or directory to search. Defaults to the workspace.")
     )("pattern"),
     args =>
       for
-        pattern <- str(args, "pattern")
+        pattern <- Args.str(args, "pattern")
         // A bad pattern is the model's to fix, so the regex error goes back verbatim
         // rather than being flattened into "no matches" — which is what a literal
         // fallback would silently look like.
         re <- Try(pattern.r).toEither.left
           .map(e => s"`$pattern` is not a valid regular expression: ${e.getMessage}")
-        start <- sb.resolve(optStr(args, "path").filter(_.nonEmpty).getOrElse("."))
+        start <- sb.resolve(Args.optStr(args, "path").getOrElse("."))
       yield
         val hits = StringBuilder()
         walk(start).foreach { f =>
@@ -201,14 +178,13 @@ object Tools:
     "Run a shell command in the workspace and return its output. This is how you build, " +
       "test and run things (`cargo build`, `cargo test`, `cargo run`). Read the output " +
       "before claiming success — a command that failed did not do what you asked.",
-    schemaOf(
-      "command" -> prop("string", "Shell command line to run."),
-      "timeout_ms" -> prop("integer", "Kill the command after this many milliseconds.")
+    Schema.obj(
+      "command" -> Schema.prop("string", "Shell command line to run."),
+      "timeout_ms" -> Schema.prop("integer", "Kill the command after this many milliseconds.")
     )("command"),
     args =>
-      str(args, "command").map { command =>
-        val limit = Try(args("timeout_ms").num.toLong).toOption
-          .map(java.time.Duration.ofMillis)
+      Args.str(args, "command").map { command =>
+        val limit = Args.optLong(args, "timeout_ms").map(java.time.Duration.ofMillis)
         val r = sb.exec(command, limit)
         val (out, outCut) = clip(r.stdout)
         val (err, errCut) = clip(r.stderr)

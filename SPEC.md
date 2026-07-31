@@ -19,12 +19,26 @@ sits underneath them.
 |---|---|---|---|
 | **Rust** | `rozum:crates/nadia` | `rozum-agent` (loop, budgets), `rozum-gateway` (client) | The executable reference. Shipped first — Rust already had the process and stdin primitives the tools need. |
 | **ScalaScript** | `src/*.ssc` | `std.agent` (loop, streaming, retry, schemas) | Dogfoods the language. The thinnest of the three: the SDK carries Contracts 1–3. |
-| **Scala 3** | `scala/*.scala` | nothing but the JDK and one JSON library | Carries all three contracts itself. |
+| **Scala 3** | `scala/` | its own SDK in `scala/sdk/`, and under that only the JDK | Carries all three contracts itself, and separates them. |
 
 The Scala 3 one exists to answer a question the other two cannot: *how much of an agent is
-the framework?* It has no SDK under it — the model client, the loop and the tools are all
-in the file tree — and it lands in about 700 lines including its tests. That number is the
-useful output.
+the framework?* It has no external SDK — so it grew its own, and the split is the answer:
+
+| | lines |
+|---|---|
+| `scala/sdk/` — model client, agent loop, tool type, loop guard (Contracts 1–3) | 330 |
+| `scala/` — sandbox, the six tools, the prompt, CLI and REPL | 534 |
+| tests | 313 |
+
+The generic half is 330 lines. That is the whole of what `rozum-agent` and `std.agent`
+provide to the other two implementations, and it is smaller than the domain code that sits
+on top of it — which is the useful finding, because it is the opposite of how the tiering
+usually looks in the telling.
+
+Splitting it also bought something end-to-end testing cannot: with `ModelClient` as an
+interface, the loop is driven by a scripted client in unit tests — budget exhaustion,
+transport failure, unknown tool, unparseable arguments, and the repetition guard are all
+exercised without a model. Before the split, the loop could only be tested by running it.
 
 All three implement *this* spec — same six tools, same safety model, same CLI surface.
 A divergence between them is a bug in one of them, and this file decides which.

@@ -35,10 +35,12 @@ So nadia is the leaf: tools, prompts, safety policy, and the user interface.
 |---|---|---|
 | Rust | `nadia run "…"` (`rozum:crates/nadia`) | Reference. Subagents, HTTP control surface, Telegram. 8/8 on the rozum matrix. |
 | ScalaScript | `ssc run src/nadia.ssc -- run "…"` | Batch + REPL, verified on a live model. |
-| Scala 3 | `scala-cli run scala -- run "…"` | Batch + REPL, verified on a live model. 13 tests. |
+| Scala 3 | `scala-cli run scala -- run "…"` | Batch + REPL, multi-turn context, its own SDK. 24 tests. |
 
-The Scala 3 one has no SDK underneath it — the model client, the agent loop and the tools
-are all in `scala/` — so it is the honest measure of how much an agent actually is.
+The Scala 3 one has no external SDK, so it has its own: `scala/sdk/` is the generic half —
+model client, agent loop, tool type, repetition guard — in 330 lines, and `scala/` is the
+domain half on top of it. That ratio is the honest measure of how much of an agent is
+framework.
 
 ### Build the Scala 3 one as a binary
 

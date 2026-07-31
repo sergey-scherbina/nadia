@@ -1,5 +1,6 @@
 package nadia
 
+import agent.{AgentLoop, Budget, Endpoint, HttpModelClient, ModelClient, Observer, Outcome, Stop, Tool}
 import scala.io.StdIn
 import scala.util.Try
 
@@ -76,21 +77,21 @@ object Main:
               allowNet = o.allowNet,
               confine = o.confine && System.getProperty("os.name").toLowerCase.contains("mac")
             )
-            val endpoint = Endpoint(o.gateway, o.model)
+            val client = HttpModelClient(Endpoint(o.gateway, o.model))
             val tools = Tools.all(sb)
             val budget = Budget(maxSteps = o.maxSteps)
             mode match
               case "run" if task.isEmpty =>
                 Console.err.println(s"nadia run needs a task\n\n$usage")
                 sys.exit(2)
-              case "run"  => batch(endpoint, sb, tools, budget, task, o)
-              case "chat" => repl(endpoint, sb, tools, budget, o)
+              case "run"  => batch(client, sb, tools, budget, task, o)
+              case "chat" => repl(client, sb, tools, budget, o)
               case other =>
                 Console.err.println(s"unknown mode `$other`\n\n$usage")
                 sys.exit(2)
 
-  private def batch(e: Endpoint, sb: Sandbox, tools: List[Tool], b: Budget, task: String, o: Opts): Unit =
-    val r = Agent.run(e, systemPrompt(sb.root.toString), task, tools, b)
+  private def batch(client: ModelClient, sb: Sandbox, tools: List[Tool], b: Budget, task: String, o: Opts): Unit =
+    val r = AgentLoop.run(client, systemPrompt(sb.root.toString), task, tools, b)
     if o.json then println(ujson.write(asJson(r)))
     else println(r.text)
     r.stop match
@@ -121,7 +122,8 @@ object Main:
     * terminal-control layer, and what a coding agent's UI has to get right is showing
     * WHAT IT DID, not drawing panes.
     */
-  private def repl(e: Endpoint, sb: Sandbox, tools: List[Tool], b: Budget, o: Opts): Unit =
+  private def repl(client: ModelClient, sb: Sandbox, tools: List[Tool], b: Budget, o: Opts): Unit =
+    var conversation = List(agent.Wire.system(systemPrompt(sb.root.toString)))
     println(s"nadia · ${o.model} · ${sb.root}")
     println(s"${tools.length} tools · /help for commands · ctrl-d to exit")
     if !o.allowNet then println("network denied to `bash` (--allow-net to permit)")
@@ -144,11 +146,15 @@ object Main:
           if line.isEmpty then ()
           else if line == "/quit" || line == "/exit" then running = false
           else if line == "/help" then
-            println("/tools  list the tools\n/quit   exit")
+            println("/tools  list the tools\n/clear  forget the conversation\n/quit   exit")
           else if line == "/tools" then
             tools.foreach(t => println(f"  ${t.name}%-11s ${t.description.takeWhile(_ != '.')}"))
           else
-            val r = Agent.run(e, systemPrompt(sb.root.toString), line, tools, b, live)
+            // resume, not run: the transcript from the previous turn is the context for
+            // this one, so the agent remembers the session and the gateway keeps its KV
+            // prefix instead of re-prefilling the whole conversation.
+            val r = AgentLoop.resume(client, conversation :+ agent.Wire.user(line), tools, b, live)
+            conversation = r.transcript
             if r.text.nonEmpty then println(s"\n${r.text}")
             r.stop match
               case Stop.Done           => ()
