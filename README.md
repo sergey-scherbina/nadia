@@ -1,76 +1,75 @@
 # nadia
 
-An LLM coding agent in [ScalaScript](https://github.com/sergey-scherbina/scalascript),
-driving a local model through the [rozum](https://github.com/sergey-scherbina/rozum)
-gateway.
-
-One agent loop, two front-ends:
-
-- **batch** — `nadia run "<task>"` runs headless to completion in the current
-  directory. Built to be a drop-in row in rozum's agentic matrix next to
-  `claude`, `codex` and `opencode`.
-- **chat** — `nadia` opens an interactive REPL with streaming output, approval
-  prompts before anything writes, and slash commands.
-
-Six tools, chosen to be the minimum that still closes real coding tasks:
-`read_file`, `write_file`, `edit_file`, `list_dir`, `grep`, `bash`.
-
-Read [`SPEC.md`](SPEC.md) first — it is written before the code and is what the
-code is reviewed against.
-
-## Why it is small
-
-The agent loop, streaming, retry/failover, JSON-schema derivation and the MCP
-bridge already exist in `scalascript:runtime/std/agent.ssc`. Rendering tools
-into whatever syntax a model family was trained on — Qwen `<tool_call>`, GLM
-`<arg_key>`, DeepSeek `<｜tool▁sep｜>`, harmony — and parsing the reply back
-already exists in the rozum gateway, together with constrained decoding that
-makes malformed arguments impossible rather than unlikely.
-
-So nadia is the leaf: tools, prompts, safety policy, and the user interface.
-
-## Three implementations
-
-| | Run it | State |
-|---|---|---|
-| Rust | `nadia run "…"` (`rozum:crates/nadia`) | Reference. Subagents, HTTP control surface, Telegram. 8/8 on the rozum matrix. |
-| ScalaScript | `ssc run src/nadia.ssc -- run "…"` | Batch + REPL, verified on a live model. |
-| Scala 3 | `scala-cli run scala -- run "…"` | Batch + REPL, multi-turn context, its own SDK. 24 tests. |
-
-The Scala 3 one has no external SDK, so it has its own: `scala/sdk/` is the generic half —
-model client, agent loop, tool type, repetition guard — in 330 lines, and `scala/` is the
-domain half on top of it. That ratio is the honest measure of how much of an agent is
-framework.
-
-### Build the Scala 3 one as a binary
+A coding agent that runs on a local model. It reads and edits files, runs commands, checks
+its own work, and stops when it is done — driving a small model through the
+[rozum](https://github.com/sergey-scherbina/rozum) gateway, with no API key and no network.
 
 ```bash
-scala-cli --power package scala -o nadia-scala --assembly
-```
-
-## Status
-
-**P0.** Usable. See `SPEC.md` §8 for phasing.
-
-## Quickstart
-
-```bash
-# a rozum gateway with a tool-capable model
-rozum gateway --model mlx-community:Qwen3.5-4B-Instruct-4bit --port 8080
+# a gateway with a tool-capable model
+rozum gateway --model mlx-community:Qwen3.5-4B-MLX-4bit --port 8080
 
 # one task, headless, in the current directory
 nadia run "add a --json flag to the CLI and a test for it"
 
-# interactive
+# or sit in it
 nadia
 ```
 
+On rozum's benchmark matrix — eight coding tasks, same local Qwen3.5-4B for everyone —
+nadia scores **14/16** against Claude Code's 15/16, Codex's 9/16 and opencode's 2/16.
+Read that as a pass rate rather than a ranking: one cell separates the top two, which is
+noise at two repetitions. The interesting number is the spread, because it says the harness
+around a small model matters more than the weights.
+
+## Six tools
+
+`read_file` · `write_file` · `edit_file` · `list_dir` · `grep` · `bash`
+
+That is the whole surface, and the bar for a seventh is that it enables something
+*impossible* with these six. Tool schemas are re-sent on every step and compete for a small
+model's attention — [tools.md](docs/tools.md) has the reasoning and the measurements.
+
+## Three implementations, one spec
+
+| | Where | Underneath it |
+|---|---|---|
+| **Rust** | `rozum:crates/nadia` | `rozum-agent`, `rozum-gateway` — the reference; subagents, HTTP surface, Telegram |
+| **ScalaScript** | [`src/`](src) | `std.agent` — the thinnest; the SDK carries all three contracts |
+| **Scala 3** | [`scala/`](scala) | its own 323-line SDK, and under that only the JDK |
+
+They differ in exactly one axis: how much sits underneath. The Scala 3 one exists to answer
+what the other two cannot — how much of an agent is framework. The answer is that the
+generic half is *smaller* than the domain half: an agent is mostly its tools and its policy,
+not its loop.
+
+All three implement [`SPEC.md`](SPEC.md), which was written before any of them. Where two
+disagree, the spec decides.
+
 ## Safety
 
-Every effect goes through a nadia handler that validates first — the SDK itself
-never touches the filesystem. Paths resolve through a workspace jail
-(`std.fs.resolveWithin`); `bash` runs confined, with a timeout, and with network
-off unless `--allow-net`. In chat mode, writes and commands ask before running.
+The loop never performs a side effect. Every effect goes through a handler that validates
+first, which is what makes it safe to point an unpredictable model at a real filesystem.
+
+Paths are jailed to the workspace and escapes are **refused, not clamped**. `bash` runs
+confined, with a timeout, and with the network off unless you ask. In interactive mode
+writes and commands ask first. Budgets and a repetition guard stop a model that has lost the
+thread.
+
+[safety.md](docs/safety.md) documents each mechanism together with the failure that shaped
+it — including the approval gate that once approved everything at end-of-input, and the
+repetition guard that cut agents off mid-repair.
+
+## Documentation
+
+| | |
+|---|---|
+| [architecture.md](docs/architecture.md) | how an agent works, the three contracts, the three tiers |
+| [tools.md](docs/tools.md) | the six tools, and how to write one a small model can use |
+| [safety.md](docs/safety.md) | containment, and the incidents behind it |
+| [operations.md](docs/operations.md) | running it, subagents, Telegram, the matrix |
+| [development.md](docs/development.md) | building and testing each implementation |
+| [SPEC.md](SPEC.md) | the contract |
+| [BACKLOG.md](BACKLOG.md) | what is not done, and what is blocked upstream |
 
 ## License
 
