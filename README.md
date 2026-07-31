@@ -50,7 +50,7 @@ scala-cli --power package scala -o nadia-scala --assembly
 
 **P0.** Usable. See `SPEC.md` §8 for phasing.
 
-## Quickstart (once P0 lands)
+## Quickstart
 
 ```bash
 # a rozum gateway with a tool-capable model

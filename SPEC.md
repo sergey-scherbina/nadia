@@ -1,12 +1,14 @@
 # nadia — spec
 
-An LLM coding agent written in ScalaScript, driving a local model through the
-rozum gateway. Two front-ends over one loop: a headless **batch CLI** (a drop-in
-row in rozum's agentic matrix, alongside `claude` / `codex` / `opencode`) and an
-interactive **REPL chat**. Later: subagents as actors, and a Telegram front-end.
+An LLM coding agent driving a local model through the rozum gateway. Two
+front-ends over one loop: a headless **batch CLI** (a drop-in row in rozum's
+agentic matrix, alongside `claude` / `codex` / `opencode`) and an interactive
+**REPL chat**. Plus subagents as actors and a Telegram front-end, in the Rust
+implementation.
 
-Status: **P0 in progress.** This spec is written before the code and is the
-contract the code is reviewed against (`/spec-dev`).
+Status: **P0 shipped in three implementations** (§0). This spec was written
+before any of them and remains the contract they are reviewed against
+(`/spec-dev`) — where two disagree, this file decides.
 
 ## 0. Three implementations, one spec
 
@@ -96,9 +98,11 @@ Large outputs are truncated at a byte budget with an explicit
 
 ## 3. Safety model
 
-The SDK never performs a side effect; every effect goes through a nadia handler,
-and every handler validates first. That is what makes it safe to point a small,
-unpredictable local model at a filesystem.
+No agent loop performs a side effect of its own; every effect goes through a
+nadia handler, and every handler validates first. That is what makes it safe to
+point a small, unpredictable local model at a filesystem — and it holds in all
+three implementations, whether the loop comes from an SDK or sits in the same
+file tree.
 
 1. **Path jail.** Every `path` argument resolves through
    `std.fs.resolveWithin(root, rel)`, which canonicalizes and returns `None` for
@@ -148,11 +152,10 @@ Slash commands: `/help`, `/tools`, `/model`, `/steps N`, `/approve auto|ask`,
 `/transcript`, `/clear`, `/quit`. Phase 2 adds `/agents`, `/spawn`, `/pause`,
 `/resume`, `/stop`.
 
-**Known dependency:** ScalaScript's `std.os` exposes no stdin primitive. v1 uses
-a ```scala passthrough block (`scala.io.StdIn.readLine`) on the JVM target; the
-clean fix is a `readLine` intrinsic in `std.os` (same shape as the existing
-`env` / `args` externs, `os-plugin/.../OsIntrinsics.scala`) and is filed
-upstream in scalascript rather than worked around permanently.
+**Resolved dependency:** ScalaScript had no stdin primitive, which made this mode
+inexpressible there. Reported as scalascript#76 and fixed upstream in
+`862a19adb` as `std.os.readLine(): Option[String]` — `None` at EOF, so an empty
+line and a closed pipe stay distinguishable. See `BACKLOG.md` NAD-2.
 
 ## 5. Matrix integration
 
