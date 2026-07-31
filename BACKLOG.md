@@ -108,9 +108,9 @@ the two disagree, `SPEC.md` decides.
   Rust twin established that `rozum launch` already exports `OPENAI_BASE_URL`
   and `ROZUM_GATEWAY_URL` to every agent it starts, so an agent that reads
   those and normalizes the `/v1` suffix is wired by the existing contract.
-- NAD-10 — token streaming in the REPL (`SPEC.md` P1). `std.agent` has
-  `runAgentStream`; the Rust twin currently renders per turn, so this is the
-  one place ScalaScript is ahead.
+- NAD-10 — token streaming in the REPL (`SPEC.md` P1). Both sides have what
+  they need: `std.agent` has `runAgentStream`, and the Rust twin now streams via
+  `rozum-agent`'s `AgentObserver`. Port the rendering, not the mechanism.
 
 ## P2+
 
