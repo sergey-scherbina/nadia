@@ -17,8 +17,16 @@ object Nadia:
     * reads rc=2 as infrastructure rather than a bad model — conflating the two is how a
     * dead gateway gets recorded as a model failure.
     */
-  def batch(client: ModelClient, sb: Sandbox, budget: Budget, task: String, asJson: Boolean): Int =
-    val r = AgentLoop.run(client, systemPrompt(sb.root.toString), task, Tools.all(sb), budget)
+  def batch(
+      client: ModelClient,
+      sb: Sandbox,
+      budget: Budget,
+      task: String,
+      asJson: Boolean,
+      mcp: List[Mcp.Connected] = Nil
+  ): Int =
+    val tools = Tools.all(sb) ++ mcp.flatMap(_.tools)
+    val r = AgentLoop.run(client, systemPrompt(sb.root.toString), task, tools, budget)
     if asJson then println(ujson.write(report(r))) else println(r.text)
     r.stop match
       case Stop.Done => 0
@@ -33,12 +41,18 @@ object Nadia:
     * without a terminal-control layer, and what a coding agent's UI has to get right is
     * showing WHAT IT DID, not drawing panes.
     */
-  def chat(client: ModelClient, sb: Sandbox, budget: Budget, model: String): Int =
-    val tools = Tools.all(sb)
+  def chat(
+      client: ModelClient,
+      sb: Sandbox,
+      budget: Budget,
+      model: String,
+      mcp: List[Mcp.Connected] = Nil
+  ): Int =
+    val tools = Tools.all(sb) ++ mcp.flatMap(_.tools)
     var conversation = List(Wire.system(systemPrompt(sb.root.toString)))
 
     println(s"nadia · $model · ${sb.root}")
-    println(s"${tools.length} tools · /help for commands · ctrl-d to exit")
+    println(s"${tools.length} tools · help for commands · ctrl-d to exit")
     // The containment is stated, not implied. Which mechanism is in force depends on where
     // this is running, and an operator who assumes the wrong one is the failure mode.
     println(sb.confinement.describe(sb.allowNet))
@@ -55,14 +69,33 @@ object Nadia:
           // output collide and the transcript becomes unreadable. Echo it ourselves.
           if System.console() == null then println(line)
           if line.isEmpty then ()
+          // `help`, `?` and `/?` are the same command as `/help`, with or without an
+          // argument: at a prompt they are a question for the program, and spending a model
+          // turn to answer what nadia already knows is seconds on a local model (SPEC §4.2).
+          else if Commands.helpRequest(line).isDefined then
+            Commands.helpRequest(line).get match
+              case None       => println(Commands.helpAll)
+              case Some(name) => println(Commands.helpOne(name).getOrElse(Commands.unknown(name)))
           else if line == "/quit" || line == "/exit" then running = false
-          else if line == "/help" then
-            println("/tools  list the tools\n/clear  forget the conversation\n/quit   exit")
           else if line == "/tools" then
             tools.foreach(t => println(f"  ${t.name}%-11s ${t.description.takeWhile(_ != '.')}"))
+          else if line == "/mcp" then
+            val names = tools.map(_.name).filter(Mcp.isMcpTool)
+            if names.isEmpty then
+              println(
+                "no MCP server connected — start nadia with --mcp <name> " +
+                  "(`nadia mcp list` shows what is configured)"
+              )
+            else
+              println(s"${names.length} MCP tool(s), OUTSIDE the workspace jail:")
+              names.foreach(n => println(s"  $n"))
           else if line == "/clear" then
             conversation = List(Wire.system(systemPrompt(sb.root.toString)))
             println("context cleared")
+          // Anything else starting with a slash is a mistyped command, not a message: send
+          // it to the model and it answers a question nobody asked. Last, so every real
+          // command above is still reachable.
+          else if line.startsWith("/") then println(Commands.unknown(line))
           else
             // resume, not run: the previous transcript is this turn's context, so the
             // session remembers and the gateway keeps its KV prefix instead of
@@ -97,7 +130,13 @@ object Nadia:
       case "write_file" => s"${s("path")} (${s("content").length} bytes)"
       case "edit_file"  => s"${s("path")} — ${s("old_string").linesIterator.size} line(s)"
       case "grep"       => s("pattern")
-      case _            => s("path")
+      // An MCP call: which server, which of its tools, and the arguments clipped. The raw
+      // JSON of an unknown schema is all there is, but a wall of it is not read by anyone.
+      case t if Mcp.isMcpTool(t) =>
+        val rest = t.stripPrefix("mcp__")
+        val (server, tool) = rest.span(_ != '_')
+        s"$server · ${tool.stripPrefix("__")} ${oneLine(ujson.write(args))}"
+      case _ => s("path")
 
   private def oneLine(s: String): String =
     val flat = s.replace('\n', ' ')

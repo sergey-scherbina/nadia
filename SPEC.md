@@ -107,7 +107,63 @@ per request. Measured baseline for comparison — Claude Code ships ~33 tools /
 ~4.9k schema tokens; `rozum launch --lean` cuts that 84%. For a 4B model every
 extra tool dilutes selection.
 
-### 2.1 Result formatting
+### 2.1 MCP tools — the seventh tool is not built, it is connected
+
+The bar above stays where it is: nadia ships six tools and grows none. MCP is the
+other answer to "I need one more" — tools nadia does not define, does not ship and
+is not responsible for, connected by the operator for a run. All three
+implementations MUST support the **client** direction (consume an MCP server's
+tools). The provider direction (serving nadia's own six over MCP) is out of scope
+here; ScalaScript gets it for free from `std.agent.mcp` and that is not a
+divergence, because nothing in this spec asks for it.
+
+1. **Opt-in per run, never ambient.** A config file that merely exists MUST NOT
+   add a single tool. Servers are named on the command line (`--mcp <name>`,
+   repeatable; `--mcp-all` for every server in the config). The reason is §2's
+   schema budget: six tools ≈ 1.5–2k tokens per request, and one MCP server can
+   add a dozen more. For a 4B model each one dilutes selection, so the decision
+   to pay belongs to the operator, not to whatever file happens to be on disk.
+2. **Configuration is the ecosystem's `mcpServers` object**, so an operator's
+   existing file works unchanged:
+   ```json
+   { "mcpServers": { "rozum": { "command": "rozum", "args": ["mcp-proxy"], "env": {} } } }
+   ```
+   Search order: `--mcp-config <path>` → `<workspace>/.mcp.json` → `~/.config/nadia/mcp.json`.
+   **stdio transport only.** An entry carrying a `url`/`type` instead of a
+   `command` is **refused by name**, not skipped: an operator who configured an
+   HTTP server and saw no error would conclude the tools were connected.
+3. **Names are prefixed `mcp__<server>__<tool>`** — the ecosystem's convention.
+   The prefix makes collision with the six impossible and keeps two servers with
+   the same tool name apart; the un-prefixed name is what goes back on the wire.
+4. **The approval gate does not care where a tool came from.** Every MCP call is
+   gated exactly like `bash` (§3.3): asked in the REPL, auto-allowed in batch. An
+   MCP server is an arbitrary program, and treating its tools as safer than
+   `bash` because they have tidy names would be backwards.
+5. **The jail does not extend to them, and the implementation MUST say so.** An
+   MCP server is a separate process with its own access to the machine — the path
+   jail and the seatbelt profile constrain nadia, not it. One line at startup
+   naming each connected server and that its tools act *outside* the workspace
+   jail. Silence here leaves the operator with a mental model ("nadia is
+   confined") that is quietly false.
+6. **A named server that will not start is a hard error before the loop begins**
+   — exit 2 in batch, naming the server and its command. A run that silently lost
+   half its tools produces a confidently wrong answer, which is the failure this
+   project keeps paying for. Connect once at startup, never per step.
+7. **A server that dies mid-run turns its tools into tool errors**, not into a
+   dead run: "server `x` is gone" reaches the model as the next prompt (§2's
+   rule that every error is a sentence the model can act on), and the six
+   built-ins keep working.
+8. **Results map to the same shape as native results** (§2.2): structured content
+   when the server sent it, else the text blocks joined; `isError` → `ToolError`;
+   the same byte budget and the same explicit truncation marker.
+9. **Discovery is listed, not guessed.** `nadia mcp list` prints the configured
+   servers; `--probe` connects and lists each server's tools with the prefix they
+   will carry. In the REPL, `/tools` shows connected MCP tools alongside the six
+   and `/mcp` shows the servers.
+10. **Timeouts.** A connect timeout and a per-call timeout (default: `bash`'s
+    120 s), so a hung server cannot wedge a turn.
+
+### 2.2 Result formatting
 
 Tool results are JSON. `read_file` returns text with line numbers because
 `edit_file` needs the model to quote `old_string` exactly, and line numbers make
@@ -165,6 +221,7 @@ file tree.
 ```
 nadia run "<task prompt>" [--workspace DIR] [--model ID] [--gateway URL]
                           [--max-steps N] [--allow-net] [--json]
+                          [--mcp NAME]… [--mcp-all] [--mcp-config PATH]
 ```
 
 Runs the loop to a final answer, prints it, exits `0` on `Done`, `1` on budget
@@ -182,9 +239,41 @@ Line-based, streaming token output, compact one-line rendering per tool call
 (`⏺ edit_file src/main.rs → replaced 1`). Each user turn runs a full agent
 sub-loop; the transcript persists across turns in one process.
 
-Slash commands: `/help`, `/tools`, `/model`, `/steps N`, `/approve auto|ask`,
-`/transcript`, `/clear`, `/quit`. Phase 2 adds `/agents`, `/spawn`, `/pause`,
-`/resume`, `/stop`.
+Slash commands: `/help`, `/tools`, `/mcp`, `/model`, `/steps N`,
+`/approve auto|ask`, `/transcript`, `/clear`, `/quit`. Phase 2 adds `/agents`,
+`/spawn`, `/pause`, `/resume`, `/stop`.
+
+**`help` and `?` are commands, not messages.** `help`, `?`, `/help` and `/?`
+(trimmed, case-insensitive) are one command with two forms:
+
+- **No argument** — every command, one per line, as **`<format>` — `<short>`**:
+  the format is the literal call shape with its arguments
+  (`/tell <id> <message>`), not just the name, because the thing a user does not
+  know at that moment is the arguments.
+- **With a command name** (`help tell`, `? /spawn` — the leading slash is
+  optional, since the user is naming a command, not calling one) — that
+  command's **format**, its **short** line, and a **longer** paragraph: what it
+  is for, and whatever is load-bearing about it (what `/stop` costs that `/kill`
+  does not; that `/approve auto` disables the gate for the session, not the
+  turn).
+- **An unknown name** — say which name was not recognized and list the names
+  only. Dumping the whole page in answer to a typo hides the answer.
+
+This requires a **command table** — name, format, short, long — that both the
+help and the dispatcher read. Two implementations wrote the help as one string
+literal; the drift that follows (a command that works and is undocumented, or is
+documented and was renamed) is the failure this clause is meant to prevent.
+
+Why `help` and `?` and not just `/help`: a person who types `help` at a prompt is
+asking the program, not the model. Sending it to a 4B model spends a turn and a
+few thousand tokens to be told what the program could answer for free — and on a
+local model that turn is seconds, not milliseconds. The slash prefix has to be
+taught; the two words everybody already tries MUST work. The match is on the
+whole line: `help me refactor this` is a message and goes to the model.
+
+The same word works from the shell: `nadia help` prints the usage text and exits
+0 — the same text as `-h`/`--help`, because a user who guesses `help` should not
+be told that their guess is an unknown mode.
 
 **Resolved dependency:** ScalaScript had no stdin primitive, which made this mode
 inexpressible there. Reported as scalascript#76 and fixed upstream in
@@ -295,3 +384,4 @@ Manifests live in `deploy/` and the containment flags they set are what makes
 | P2 | subagents as actors + `/agents` commands | parent drives 2 children to completion |
 | P3 | Telegram front-end | same protocol, no agent-side changes |
 | P4 | containers + hosted providers (§8) | a task runs to completion in a container against a gateway it does not share a machine with |
+| P5 | MCP client (§2.1) + `help`/`?` (§4.2) | a task completes using a tool no implementation ships, connected by name from a config the operator already had |

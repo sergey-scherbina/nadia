@@ -96,6 +96,54 @@ lose.
 A killed command reports `exit_code: 124`, which is what `timeout(1)` uses, so the model
 sees a convention it was trained on rather than one this project invented.
 
+## The seventh tool is not built, it is connected — MCP
+
+The bar above stays where it is: nadia ships six tools and grows none. When a run needs
+something else, the operator connects an **MCP server** — tools nadia does not define, does
+not ship and is not responsible for. `SPEC.md` §2.1 is the contract; this is how it is used.
+
+```bash
+nadia mcp list --probe                    # what is configured, and what each server serves
+nadia run "…" --mcp rozum                 # connect one server for this run
+nadia chat --mcp rozum --mcp fs           # repeatable; --mcp-all takes everything
+```
+
+The config is the ecosystem's `mcpServers` object, so a file you already have works
+unchanged — `--mcp-config PATH`, else `<workspace>/.mcp.json`, else `~/.config/nadia/mcp.json`:
+
+```json
+{ "mcpServers": { "rozum": { "command": "rozum", "args": ["mcp-proxy"] } } }
+```
+
+Five things about it are decisions rather than defaults:
+
+- **Opt-in per run.** A config that merely exists adds nothing. One server can add a dozen
+  tools to the six, and by the numbers at the top of this file that is the difference
+  between ~2k and ~5k tokens of schema in *every request of every step* — which is exactly
+  what `--lean` exists to undo. The operator decides when to pay, not the filesystem.
+- **Names are prefixed `mcp__<server>__<tool>`.** Collision with the six becomes impossible
+  and two servers exporting the same tool stay apart.
+- **Gated exactly like `bash`.** An MCP server is an arbitrary program; treating its tools
+  as safer because they have tidy names would be backwards.
+- **Outside the jail, and said out loud.** A server is a separate process with its own
+  access to the machine — the path jail and the seatbelt profile confine nadia, not it.
+  Every connect prints that. Silence would leave you with a model of the safety that is
+  quietly false.
+- **A named server that will not start ends the run**, before the loop, with its name. A run
+  that silently lost half its tools produces a confidently wrong answer. A server that dies
+  *mid*-run is the opposite case: its tools answer "server `x` is gone", which the model can
+  act on, and the six built-ins keep working.
+
+Only the stdio transport. An entry with a `url` is **refused by name** rather than skipped,
+because an operator who configured an HTTP server and saw no error would conclude it was
+connected and then debug a model that "ignores its tools".
+
+All three implementations do this; only the plumbing under them differs — rmcp in Rust,
+`std.mcp.client` in ScalaScript, and in Scala 3 a hand-written JSON-RPC client
+(`scala/sdk/McpClient.scala`, ~120 lines) because there is nothing underneath it to ask.
+One divergence, stated rather than hidden: the ScalaScript `Transport.Spawn` cannot pass
+`env` to the child, so an entry that sets one is refused there instead of started without it.
+
 ## Writing a tool that a small model can use
 
 The rules below are not style preferences; each one was measured or paid for.

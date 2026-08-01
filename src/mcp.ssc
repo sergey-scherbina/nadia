@@ -1,0 +1,170 @@
+---
+name: nadia-mcp
+version: 0.1.0
+description: MCP servers as extra tools — the client direction of SPEC §2.1.
+package: nadia.mcp
+exports:
+  - McpServerSpec
+  - parseMcpConfig
+  - selectServers
+  - connectServer
+  - mcpPrefixed
+  - isMcpTool
+  - connectedLine
+  - stdioRefusal
+---
+
+# nadia.mcp — tools nadia does not ship
+
+The bar for a seventh built-in tool stays where it is (`SPEC.md` §2). MCP is the other
+answer to "I need one more": tools nadia does not define and is not responsible for,
+connected by the operator for a run.
+
+The tier below already has the hard part. `std.mcp.client` speaks the protocol and
+`std.agent.mcp.mcpToolSource` already wraps a connected server's tools as `AgentTool`s —
+so what lives here is only what an application owns: where the config is, which servers
+are connected, what the tools are called, and what happens when a server is broken.
+
+One limit of this backend is stated rather than hidden: `Transport.Spawn` carries a
+command and arguments, but no environment. A config entry with a non-empty `env` is
+**refused by name** rather than connected without it — a server started without the token
+its config sets fails later, further away, and looks like the server's fault. The Rust
+implementation passes `env`; this one says why it cannot.
+
+`std.mcp.client` documents `Feature.McpClient` as jvm/js-only, which reads as "not under
+`ssc run`". Measured 2026-08-01: it connects and calls fine on the v2 VM — a real server
+(`rozum mcp-proxy`) listed its seven tools and the model called one end to end. The
+connect failure below therefore reports what actually went wrong instead of blaming the
+backend, which is what that stale note would have had it do.
+
+[AgentTool, agentTool, toolOk, toolError](std/agent.ssc)
+[mcpToolSource](std/agent-mcp.ssc)
+[McpClient, mcpConnect, Transport, McpError](std/mcp/client.ssc)
+[readFile, exists](std/fs.ssc)
+
+```scalascript
+// An object parses to a Map; the config's server names are its keys. `std.json`'s
+// navigable JsonValue cannot enumerate keys, and the names are exactly what we need.
+extern def jsonParse(s: String): Map[String, Any]
+
+/** One `mcpServers` entry. `url`/`kind` are only ever used to explain a refusal. */
+case class McpServerSpec(
+  name: String,
+  command: String,
+  args: List[String],
+  envKeys: List[String],
+  url: String,
+  kind: String
+)
+
+def asText(v: Any): String =
+  v match
+    case s: String => s
+    case _         => ""
+
+def asTextList(v: Any): List[String] =
+  v match
+    case l: List[Any] => l.map(asText).filter(s => s != "")
+    case _            => List()
+
+def asKeys(v: Any): List[String] =
+  v match
+    case m: Map[String, Any] => m.keys.toList.sorted
+    case _                   => List()
+
+/** Read the ecosystem's `mcpServers` object — the shape Claude Code and the rest already
+  * write, so an operator's existing file works unchanged and nobody learns a nadia config. */
+def parseMcpConfig(text: String): List[McpServerSpec] =
+  val root = jsonParse(text)
+  root.get("mcpServers") match
+    case Some(servers) =>
+      servers match
+        case m: Map[String, Any] =>
+          m.keys.toList.sorted.map { name =>
+            val entry = m.get(name).map(e => e).getOrElse("")
+            entry match
+              case e: Map[String, Any] =>
+                McpServerSpec(
+                  name,
+                  asText(e.get("command").getOrElse("")),
+                  asTextList(e.get("args").getOrElse(List())),
+                  asKeys(e.get("env").getOrElse("")),
+                  asText(e.get("url").getOrElse("")),
+                  asText(e.get("type").getOrElse(""))
+                )
+              case _ => McpServerSpec(name, "", List(), List(), "", "")
+          }
+        case _ => List()
+    case None => List()
+
+/** Why this entry cannot be a stdio server, or `None` when it can. Refusing by name is
+  * the point: an operator who configured an HTTP server and saw no error would conclude
+  * it was connected. */
+def stdioRefusal(spec: McpServerSpec): Option[String] =
+  if spec.command.trim() == "" then
+    val what =
+      if spec.url != "" then "a url (" + spec.url + ")"
+      else if spec.kind != "" then "type `" + spec.kind + "`"
+      else "no `command`"
+    Some("MCP server `" + spec.name + "` has " + what + ": nadia speaks the stdio transport " +
+         "only, so this server cannot be connected. Give it a `command` that starts the " +
+         "server on stdio, or drop it from --mcp.")
+  else if spec.envKeys.length > 0 then
+    Some("MCP server `" + spec.name + "` sets env (" + spec.envKeys.mkString(", ") + "), and " +
+         "this backend's Spawn transport cannot pass it to the child. Refusing rather than " +
+         "starting the server without it — a server missing its token fails later and looks " +
+         "like the server's fault. Export the variables before starting nadia, or use the " +
+         "Rust implementation, which passes them.")
+  else None
+
+/** Which servers to connect, from `--mcp NAME…` / `--mcp-all`. A name that is not in the
+  * config is an error naming what IS there: a typo must not read as "no tools". */
+def selectServers(all: List[McpServerSpec], wanted: List[String], everyOne: Boolean): Either[String, List[McpServerSpec]] =
+  if everyOne then Right(all)
+  else
+    def go(rest: List[String], acc: List[McpServerSpec]): Either[String, List[McpServerSpec]] =
+      rest match
+        case Nil => Right(acc)
+        case name :: tail =>
+          all.find(s => s.name == name) match
+            case Some(s) => go(tail, acc :+ s)
+            case None =>
+              val known = all.map(s => s.name)
+              Left(
+                if known.length == 0 then "no MCP server `" + name + "` — the config has none configured"
+                else "no MCP server `" + name + "` — the config has: " + known.mkString(" ")
+              )
+    go(wanted, List())
+
+/** The name an MCP tool carries into the model's tool list: the ecosystem's convention.
+  * The prefix makes a collision with the six impossible and keeps two servers apart. */
+def mcpPrefixed(server: String, tool: String): String = "mcp__" + server + "__" + tool
+
+def isMcpTool(name: String): Boolean = name.startsWith("mcp__")
+
+/** Connect one server and return its tools, renamed. Renaming the `AgentTool` is enough:
+  * its handler closed over the server's own name when `mcpToolSource` built it, so the
+  * call still goes out under the real name while the model sees the prefixed one. */
+def connectServer(spec: McpServerSpec): Either[String, List[AgentTool]] =
+  stdioRefusal(spec) match
+    case Some(why) => Left(why)
+    case None =>
+      try
+        val client = mcpConnect(Transport.Spawn(spec.command, spec.args))
+        Right(mcpToolSource(client).map { t =>
+          AgentTool(mcpPrefixed(spec.name, t.name), t.description, t.parametersJson, t.handler)
+        })
+      catch
+        case e: McpError =>
+          Left("MCP server `" + spec.name + "`: " + e.toString)
+        case e: Throwable =>
+          // Anything else the spawn or the handshake can raise — a command that is not on
+          // PATH is the common one. It reaches the operator verbatim, with the command, so
+          // the answer is in the message rather than in a debugging session.
+          Left("MCP server `" + spec.name + "` (" + spec.command + "): " + e.toString)
+
+/** The line printed once per connected server: what it added, and that it is NOT jailed. */
+def connectedLine(name: String, tools: List[AgentTool]): String =
+  "mcp `" + name + "`: " + tools.length.toString + " tool(s) — " +
+  tools.map(t => t.name).mkString(" ") + " · runs OUTSIDE the workspace jail"
+```

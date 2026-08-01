@@ -24,7 +24,8 @@ step count and every tool call with its result — which is what you want when a
 surprises you.
 
 Useful flags: `--workspace DIR` (act somewhere other than cwd), `--max-steps N`,
-`--allow-net`, `--no-confine`.
+`--allow-net`, `--no-confine`, and `--mcp NAME` to connect an MCP server's tools for this
+run ([tools.md](tools.md#the-seventh-tool-is-not-built-it-is-connected--mcp)).
 
 ## Interactive
 
@@ -51,7 +52,22 @@ announced *before* it runs, so the last line on screen is always what is happeni
   ⏺ bash   cargo test
 ```
 
-Commands: `/help`, `/tools`, `/clear`, `/context`, `/approve ask|auto`, `/quit`.
+Commands: `/help`, `/tools`, `/mcp`, `/clear`, `/context`, `/approve ask|auto`, `/quit`.
+
+**`help` and `?` work without the slash**, and take a command name:
+
+```
+› help                     every command, with its format and one line
+› help tell                /tell <id> <message>, what it is for, and what it costs
+› ?                        the same as help
+```
+
+A person who types `help` at a prompt is asking the program, not the model — answering it
+with a model turn spends seconds and a few thousand tokens to say what nadia already knows.
+The match is on the whole line, so `help me refactor this` is still a message. A mistyped
+command gets the list of names rather than the whole page, because a page hides the answer
+to a typo. The formats and the descriptions are rendered from one table per implementation,
+so the help cannot drift from what the REPL actually accepts.
 
 Writes and commands ask before running (see [safety.md](safety.md#approval-gates)); batch
 mode auto-allows, because asking in an unattended run deadlocks on a stdin nobody is at.

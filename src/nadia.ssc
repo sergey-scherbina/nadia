@@ -12,8 +12,11 @@ schema derivation come from `std.agent`; the per-family tool dialect stays in th
 rozum gateway. What lives here is what an application owns: tools, prompts, safety
 policy, and the interface.
 
-[AgentEndpoint, RunOptions, runAgent, AgentResult](std/agent.ssc)
+[AgentEndpoint, RunOptions, runAgent, AgentResult, AgentTool](std/agent.ssc)
 [Sandbox, nadiaTools](tools.ssc)
+[helpAll, helpOne, unknownCommand](commands.ssc)
+[McpServerSpec, parseMcpConfig, selectServers, connectServer, isMcpTool, connectedLine, stdioRefusal](mcp.ssc)
+[readFile, exists](std/fs.ssc)
 [args, env, envOrElse, cwd, exit, readLine](std/os.ssc)
 
 ```scalascript
@@ -63,10 +66,21 @@ val usage =
   "USAGE:\n" +
   "    nadia run <task>   run one task headlessly in the current directory\n" +
   "    nadia chat         interactive session (default with no arguments)\n" +
+  "    nadia mcp list     the configured MCP servers\n" +
+  "    nadia help         this text\n" +
+  "\n" +
+  "OPTIONS:\n" +
+  "    --mcp <NAME>       connect this MCP server's tools (repeatable)\n" +
+  "    --mcp-all          connect every server in the config\n" +
+  "    --mcp-config PATH  [default: ./.mcp.json]\n" +
   "\n" +
   "ENV:\n" +
   "    OPENAI_BASE_URL / ROZUM_GATEWAY_URL   where the gateway is\n" +
   "    NADIA_MODEL                           model id to ask it for\n" +
+  "\n" +
+  "MCP servers are opt-in per run: a config that merely exists adds no tools, because\n" +
+  "every tool costs schema tokens in every request. Their tools are named\n" +
+  "mcp__<server>__<tool> and run OUTSIDE the workspace jail.\n" +
   "\n" +
   "EXIT CODES (batch):  0 finished   1 budget exhausted   2 gateway failure"
 
@@ -80,9 +94,95 @@ def firstLine(s: String): String =
   val cut = if s.length > 96 then s.substring(0, 96) + "…" else s
   cut.replace("\n", " ")
 
-def runOnce(sb: Sandbox, endpoint: AgentEndpoint, model: String, task: String, maxSteps: Int): AgentResult =
-  runAgent(endpoint, model, systemPrompt(sb.root), task, nadiaTools(sb),
+def runOnce(sb: Sandbox, endpoint: AgentEndpoint, model: String, task: String, maxSteps: Int,
+            extraTools: List[AgentTool]): AgentResult =
+  runAgent(endpoint, model, systemPrompt(sb.root), task, nadiaTools(sb) ++ extraTools,
            RunOptions(temperature = 0.0, maxSteps = maxSteps))
+
+// ─── MCP wiring (SPEC §2.1) ──────────────────────────────────────────────────
+
+/** The flags this front-end parses. Everything else is a mode or a task word, as before. */
+case class Flags(mcp: List[String], mcpAll: Boolean, mcpConfig: String, rest: List[String])
+
+def parseFlags(argv: List[String]): Flags =
+  def go(rest: List[String], f: Flags): Flags =
+    rest match
+      case Nil => f
+      case a :: tail =>
+        if a == "--mcp-all" then go(tail, Flags(f.mcp, true, f.mcpConfig, f.rest))
+        else if a == "--mcp" then
+          tail match
+            case v :: more => go(more, Flags(f.mcp :+ v, f.mcpAll, f.mcpConfig, f.rest))
+            case Nil       => f
+        else if a == "--mcp-config" then
+          tail match
+            case v :: more => go(more, Flags(f.mcp, f.mcpAll, v, f.rest))
+            case Nil       => f
+        else go(tail, Flags(f.mcp, f.mcpAll, f.mcpConfig, f.rest :+ a))
+  go(argv, Flags(List(), false, "", List()))
+
+/** Where the config is: `--mcp-config`, else the workspace's own `.mcp.json`. */
+def mcpConfigPath(flags: Flags, root: String): String =
+  if flags.mcpConfig != "" then flags.mcpConfig else root + "/.mcp.json"
+
+def loadServers(path: String): Either[String, List[McpServerSpec]] =
+  if exists(path) then Right(parseMcpConfig(readFile(path)))
+  else Left("no MCP config at " + path + " (pass --mcp-config)")
+
+/** Connect what was asked for, or exit 2 naming the server that would not start: a run
+  * that silently lost half its tools produces a confidently wrong answer (SPEC §2.1). */
+def connectRequested(flags: Flags, root: String): List[AgentTool] =
+  if flags.mcp.length == 0 && !flags.mcpAll then List()
+  else
+    loadServers(mcpConfigPath(flags, root)) match
+      case Left(why) =>
+        println("nadia: " + why)
+        exit(2)
+        List()
+      case Right(all) =>
+        selectServers(all, flags.mcp, flags.mcpAll) match
+          case Left(why) =>
+            println("nadia: " + why)
+            exit(2)
+            List()
+          case Right(chosen) =>
+            def go(rest: List[McpServerSpec], acc: List[AgentTool]): List[AgentTool] =
+              rest match
+                case Nil => acc
+                case s :: tail =>
+                  connectServer(s) match
+                    case Left(why) =>
+                      println("nadia: " + why)
+                      exit(2)
+                      acc
+                    case Right(tools) =>
+                      println(connectedLine(s.name, tools))
+                      go(tail, acc ++ tools)
+            go(chosen, List())
+
+/** `nadia mcp list` — what is configured, and why an entry cannot be connected. */
+def mcpList(flags: Flags, root: String): Unit =
+  val path = mcpConfigPath(flags, root)
+  loadServers(path) match
+    case Left(why) => println(why)
+    case Right(all) =>
+      println(path)
+      if all.length == 0 then println("  (no servers configured)")
+      for s <- all do
+        stdioRefusal(s) match
+          case Some(why) => println("  " + s.name + "  ✗ " + why)
+          case None      => println("  " + s.name + "  " + s.command + " " + s.args.mkString(" "))
+
+/** Is this line a request for help, and for which command? The four spellings a person
+  * actually types, and only as the whole line — `help me refactor this` is a message for
+  * the model (SPEC §4.2). Returns ("", "") for "not a help request". */
+def helpRequest(line: String): (String, String) =
+  val t = line.trim()
+  val sp = t.indexOf(" ")
+  val head = if sp < 0 then t else t.substring(0, sp)
+  val rest = if sp < 0 then "" else t.substring(sp + 1).trim()
+  val h = head.toLowerCase()
+  if h == "help" || h == "?" || h == "/help" || h == "/?" then ("help", rest) else ("", "")
 
 /** The interactive front-end. Line-based on purpose: it works over ssh, in a pipe and
   * inside tmux without a terminal-control layer, and what a coding agent's UI has to get
@@ -91,9 +191,11 @@ def runOnce(sb: Sandbox, endpoint: AgentEndpoint, model: String, task: String, m
   * Each turn is independent: `std.agent` exposes no entry point that resumes an existing
   * transcript, so context does not yet carry across turns here. The Rust twin has one
   * (`run_agent_conversation`); the same addition is wanted upstream — see NAD-11. */
-def repl(sb: Sandbox, endpoint: AgentEndpoint, model: String, maxSteps: Int): Unit =
+def repl(sb: Sandbox, endpoint: AgentEndpoint, model: String, maxSteps: Int,
+         mcpTools: List[AgentTool]): Unit =
+  val all = nadiaTools(sb) ++ mcpTools
   println("nadia · " + model + " · " + sb.root)
-  println("6 tools · /help for commands · ctrl-d to exit")
+  println(all.length.toString + " tools · help for commands · ctrl-d to exit")
   var running = true
   while running do
     print("\n› ")
@@ -101,19 +203,35 @@ def repl(sb: Sandbox, endpoint: AgentEndpoint, model: String, maxSteps: Int): Un
       case None => running = false
       case Some(raw) =>
         val line = raw.trim()
+        val (isHelp, which) = helpRequest(line)
         if line == "" then ()
+        else if isHelp == "help" then
+          if which == "" then println(helpAll())
+          else
+            helpOne(which) match
+              case Some(text) => println(text)
+              case None       => println(unknownCommand(which))
         else if line == "/quit" || line == "/exit" then running = false
-        else if line == "/help" then
-          println("/tools  list the tools\n/quit   exit")
         else if line == "/tools" then
-          for t <- nadiaTools(sb) do println("  " + t.name)
+          for t <- all do println("  " + t.name)
+        else if line == "/mcp" then
+          val names = all.map(t => t.name).filter(isMcpTool)
+          if names.length == 0 then
+            println("no MCP server connected — start nadia with --mcp <name> " +
+                    "(`nadia mcp list` shows what is configured)")
+          else
+            println(names.length.toString + " MCP tool(s), OUTSIDE the workspace jail:")
+            for n <- names do println("  " + n)
+        else if line.startsWith("/") then
+          println(unknownCommand(line))
         else
-          val r = runOnce(sb, endpoint, model, line, maxSteps)
+          val r = runOnce(sb, endpoint, model, line, maxSteps, mcpTools)
           renderOps(r)
           if r.text != "" then println("\n" + r.text)
           if r.stop != "Done" then println("[stopped: " + r.stop + "]")
 
-val argv = args
+val flags = parseFlags(args.toList)
+val argv = flags.rest
 val mode = if argv.length == 0 then "chat" else argv(0)
 val root = cwd
 val sb = Sandbox(root)
@@ -121,17 +239,24 @@ val model = envOrElse("NADIA_MODEL", "local")
 val endpoint = AgentEndpoint(defaultGateway())
 val maxSteps = 24
 
-if mode == "-h" || mode == "--help" then
+// `nadia help` is the same answer as `-h`. A user who guesses the word everybody guesses
+// should not be told that their guess is an unknown mode (SPEC §4.2).
+if mode == "-h" || mode == "--help" || mode == "help" || mode == "?" then
   println(usage)
+else if mode == "mcp" then
+  if argv.length < 2 || argv(1) != "list" then
+    println("nadia mcp list\n\n" + usage)
+    exit(2)
+  else mcpList(flags, root)
 else if mode == "chat" then
-  repl(sb, endpoint, model, maxSteps)
+  repl(sb, endpoint, model, maxSteps, connectRequested(flags, root))
 else if mode == "run" then
   if argv.length < 2 then
     println("nadia run needs a task\n\n" + usage)
     exit(2)
   else
     val task = argv.drop(1).mkString(" ")
-    val r = runOnce(sb, endpoint, model, task, maxSteps)
+    val r = runOnce(sb, endpoint, model, task, maxSteps, connectRequested(flags, root))
     renderOps(r)
     println(r.text)
     // The three values std.agent can return (agent.ssc): Done / MaxSteps / Error.

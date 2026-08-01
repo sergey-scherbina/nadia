@@ -1,0 +1,97 @@
+---
+name: nadia-commands
+version: 0.1.0
+description: The REPL's command table — one place that knows a command exists, its format and what it does.
+package: nadia.commands
+exports:
+  - Command
+  - commands
+  - findCommand
+  - helpAll
+  - helpOne
+  - unknownCommand
+---
+
+# nadia.commands — the table the help is rendered from
+
+`SPEC.md` §4.2. The clause exists because the first version of this help was a string
+literal next to the `if/else` chain that dispatches: two lists that have to agree, and
+therefore eventually don't — a command gets renamed in one and stays in the other. Here
+the help is *rendered from* the table the dispatcher consults, so the drift has nowhere
+to live.
+
+`help` / `?` (and `/help` / `/?`) read it two ways: bare — every command as
+`format — short`; with a name — that command's format, its short line, and the paragraph
+that says what is load-bearing about it.
+
+```scalascript
+/** One command as the help needs it. `format` is the literal call shape WITH its
+  * arguments, because what a user does not know at the moment they ask is the arguments,
+  * not the name they just typed. */
+case class Command(name: String, format: String, short: String, long: String)
+
+val commands: List[Command] = List(
+  Command("/help", "help | ? | /help [command]", "this list, or one command in detail",
+    "With no argument: every command, with its format and one line. With a command name " +
+    "(the leading slash is optional — `help tools` and `? /tools` are the same question) " +
+    "it prints that command's format, its short line and this paragraph. `help` and `?` " +
+    "work without the slash: at a prompt they are a question for the program, and sending " +
+    "them to the model would spend a turn to be told what nadia already knows."),
+  Command("/tools", "/tools", "list the tools the model can call",
+    "The six built-ins, plus any tool from an MCP server connected with --mcp (those are " +
+    "named mcp__<server>__<tool>). Every tool listed here costs schema tokens in every " +
+    "request of every step, which is why the set is small and why MCP servers are opt-in " +
+    "per run rather than loaded because a config file exists."),
+  Command("/mcp", "/mcp", "the connected MCP servers and their tools",
+    "Shows the tools each connected server contributed. An MCP server is a separate " +
+    "process with its own access to the machine: the path jail confines nadia, not it."),
+  Command("/quit", "/quit | /exit", "exit nadia",
+    "Leaves the session; ctrl-d does the same. Nothing is saved — each turn is " +
+    "independent in this implementation (see NAD-11).")
+)
+
+/** Look a command up by the name a user typed: with or without the leading slash, any
+  * case. `?` and `help` both resolve to `/help`, because that is the command they are. */
+def findCommand(name: String): Option[Command] =
+  val trimmed = name.trim()
+  val bare = (if trimmed.startsWith("/") then trimmed.substring(1) else trimmed).toLowerCase()
+  val key = if bare == "?" || bare == "help" then "help" else bare
+  commands.find(c => c.name.substring(1) == key)
+
+/** Pad right to `width`. Written as a fold rather than `" ".repeat(n)`: the v2 VM has no
+  * dispatch for `repeat` on a String, and the failure is a runtime message in the middle
+  * of the help — the one output that has to work when nothing else does. */
+def padTo(s: String, width: Int): String =
+  def go(acc: String): String = if acc.length >= width then acc else go(acc + " ")
+  go(s)
+
+/** The bare `help` page: every command as `format — short`, aligned. */
+def helpAll(): String =
+  val width = commands.map(c => c.format.length).foldLeft(0)((a, b) => if b > a then b else a)
+  val lines = commands.map(c => "  " + padTo(c.format, width) + "  " + c.short)
+  lines.mkString("\n") +
+    "\n\n  help <command> for one of them in detail. Anything else is a message to the model."
+
+/** `help <command>`: format, short, then the paragraph. `None` when the name is not a
+  * command — the caller answers with the names rather than the whole page, so a typo does
+  * not hide the answer. */
+def helpOne(name: String): Option[String] =
+  findCommand(name).map(c => "  " + c.format + "\n  " + c.short + "\n\n" + wrapText(c.long, 76, "  "))
+
+/** The answer to a name that is not a command: say which, then the names only. */
+def unknownCommand(name: String): String =
+  "no command `" + name.trim() + "`. There is: " + commands.map(c => c.name).mkString(" ")
+
+/** Soft-wrap a paragraph — the long text is written as one string, and a terminal is not
+  * obliged to be wide. */
+def wrapText(text: String, width: Int, indent: String): String =
+  val words = text.split(" ").toList.filter(w => w != "")
+  def go(rest: List[String], line: String, out: List[String]): List[String] =
+    rest match
+      case Nil => if line == "" then out else out :+ (indent + line)
+      case w :: tail =>
+        if line != "" && line.length + 1 + w.length > width then go(tail, w, out :+ (indent + line))
+        else if line == "" then go(tail, w, out)
+        else go(tail, line + " " + w, out)
+  go(words, "", List()).mkString("\n")
+```
