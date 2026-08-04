@@ -271,6 +271,22 @@ same rules and exits non-zero when one of them changed.
 The three differ only where this spec is silent: how many repair rounds, the
 wording shown to an operator, and which front-ends carry it.
 
+The same measurement §0 makes for the loop, now for the gate — and it comes out
+the same way:
+
+| | generic (primitives) | domain (policy) | what is underneath |
+|---|---:|---:|---|
+| Rust | 456 (`rozum-agent::verify`, shared with `rozum launch`) | 197 | a workspace crate |
+| Scala 3 | 244 (`sdk/Verify.scala`) | 86 | the JDK |
+| ScalaScript | — | 179 (`gate.ssc`) | `std.agent` + `std.process` |
+
+The Rust number is larger because that module is a shared library with two
+consumers and carries their tests; the Scala 3 one is the honest cost of the
+contract with nothing underneath it. The ScalaScript column has no generic half
+at all — the model call and the process exec come from `std`, and what is left is
+purely the domain. That is the finding, again: the framework is the smaller
+part.
+
 ## 4. Modes
 
 ### 4.1 Batch (headless)
