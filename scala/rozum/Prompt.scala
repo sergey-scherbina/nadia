@@ -24,6 +24,14 @@ def systemPrompt(root: String): String =
      |right order. If they differ, the task is NOT finished: fix the code and run it again.
      |Never report success you have not observed.
      |
+     |Create a project IN that directory, not under it: `cargo init` in the workspace root,
+     |never `cargo new <name>`, which makes a subdirectory the acceptance check cannot see.
+     |
+     |Every path you pass to a tool is RELATIVE to that directory: write `src/main.rs`, never
+     |`$root/src/main.rs` and never `${root.stripPrefix("/")}/src/main.rs`. Repeating the
+     |workspace path builds a copy of it INSIDE itself and the file lands where nobody is
+     |looking — the run then reports success for work the person who asked cannot find.
+     |
      |Read a file before editing it, and quote `old_string` exactly as it appears. Make the
      |smallest change that satisfies the task.
      |

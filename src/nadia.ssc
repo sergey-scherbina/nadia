@@ -38,6 +38,11 @@ def systemPrompt(root: String): String =
   "Create a project IN that directory, not under it: `cargo init` in the workspace root, " +
   "never `cargo new <name>`, which makes a subdirectory the acceptance check cannot see.\n" +
   "\n" +
+  "Every path you pass to a tool is RELATIVE to that directory: write `src/main.rs`, never " +
+  root + "/src/main.rs and never the same path with its leading slash dropped. Repeating the " +
+  "workspace path builds a copy of it INSIDE itself and the file lands where nobody is " +
+  "looking — the run then reports success for work the person who asked cannot find.\n" +
+  "\n" +
   "Read a file before editing it, and quote `old_string` exactly as it appears. Make " +
   "the smallest change that satisfies the task.\n" +
   "\n" +
