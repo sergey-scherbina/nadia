@@ -28,7 +28,9 @@ after it stops, that check decides. A failure comes back as the next turn carryi
 what it actually printed (two rounds by default). The last line says which of four happened —
 `✔ check passed: <command>`, `✘ check FAILED` with the output, a model-judge verdict, or
 `⚠ not checked` when the task had no machine-checkable criterion. A failed check exits 1: success
-is not the model's to declare. `NADIA_VERIFY=0` turns it off, `NADIA_VERIFY_ROUNDS=N` changes the
+is not the model's to declare — and a run that ran out of budget *after* the check passed exits 0,
+because failure is not the model's to declare either. The check runs whatever the stop reason was;
+only the repair round and the model-judge need the agent to have finished. `NADIA_VERIFY=0` turns it off, `NADIA_VERIFY_ROUNDS=N` changes the
 budget. Contract: [SPEC.md](../SPEC.md) §3.1.
 
 Useful flags: `--workspace DIR` (act somewhere other than cwd), `--max-steps N`,

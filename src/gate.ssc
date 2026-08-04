@@ -46,11 +46,13 @@ paid for:
 ```scalascript
 val derivePrompt =
   "Set up the acceptance CHECK for this coding task. Reply with ONLY a JSON object, no prose:\n" +
-  "{\"checkable\": <true|false>, \"cargo_test\": <true|false>, \"run\": [{\"arg\": \"<argument VALUE only>\", \"expect\": \"<exact stdout>\"}]}\n" +
+  "{\"checkable\": <true|false>, \"cargo_test\": <true|false>, \"run\": [{\"args\": [\"<one entry PER command-line argument>\"], \"expect\": \"<exact stdout>\"}]}\n" +
   "- \"run\": one entry per concrete example the task states as `cargo run -- X` printing `Y`.\n" +
-  "  `arg` is JUST the argument value X; `expect` is JUST Y. Omit if no example.\n" +
-  "- Quotes that DELIMIT a value in the task are not part of it: for `cargo run -- \"3 4 + 2 *\"` " +
-  "printing 14, arg is `3 4 + 2 *` and expect is `14` — no surrounding quotes in either.\n" +
+  "  `args` is the argument LIST X, one entry per argument; `expect` is JUST Y. Omit if no example.\n" +
+  "- HOW MANY entries is decided by the task's spacing and quotes, and it matters: " +
+  "`cargo run -- 3 4` printing 7 is TWO arguments, args [\"3\", \"4\"] — while " +
+  "`cargo run -- \"3 4 + 2 *\"` printing 14 is ONE argument, args [\"3 4 + 2 *\"]. Quotes that " +
+  "DELIMIT a value are not part of it: no surrounding quotes in the entries or in expect.\n" +
   "- cargo_test=true ONLY if the task explicitly requires a unit test to pass.\n" +
   "- checkable=false if the task has no machine-checkable build/run/test criterion. In particular, " +
   "if the task is NOT about a Rust program — it only asks for a chat reply, an explanation, or " +
@@ -91,13 +93,69 @@ def unquote(s: String): String =
         case Some(v) => v
         case None    => t
 
+/** Split a command line the way a shell does — whitespace separates, quotes group. No escapes
+  * and no expansion: this reads the argument list a TASK wrote. */
+def shellLex(s: String): List[String] =
+  var out = List[String]()
+  var cur = ""
+  var quote = ""
+  var has = false
+  for c <- s.toCharArray.toList do
+    val ch = c.toString
+    if quote != "" then
+      if ch == quote then quote = "" else cur = cur + ch
+    else if ch == "\"" || ch == "'" then
+      quote = ch
+      has = true
+    else if ch == " " || ch == "\t" then
+      if has || cur != "" then
+        out = out :+ cur
+        cur = ""
+        has = false
+    else cur = cur + ch
+  if has || cur != "" then out = out :+ cur
+  out
+
+/** The arity of an example, taken from the TASK rather than from the model. The model is good at
+  * "what should this print" and bad at shell lexing — and lexing is the one part we can do
+  * exactly, because the task wrote the list with its quotes. Measured 2026-08-04 in BOTH
+  * directions: asked for one string it merged `cargo run -- 3 4`; asked for a list it split
+  * `cargo run -- "3 4 + 2 *"` into five. `None` when the task states no such example. */
+def taskArgvFor(task: String, joined: String): Option[List[String]] =
+  val want = joined.split(" ").filter(w => w != "")
+  if want.isEmpty then None
+  else
+    val marker = "cargo run --"
+    val i = task.indexOf(marker)
+    if i < 0 then None
+    else
+      val rest = task.substring(i + marker.length)
+      val line = rest.split("\n").headOption.getOrElse(rest)
+      val lexed = shellLex(line)
+      var found: Option[List[String]] = None
+      var n = 1
+      while n <= lexed.length && found.isEmpty do
+        val prefix = lexed.take(n)
+        val flat = prefix.flatMap(w => w.split(" ").filter(x => x != ""))
+        if flat == want then found = Some(prefix)
+        n = n + 1
+      found
+
 /** A `cargo run` check that SAYS what it saw — a silent comparison leaves the repair round
   * with an empty error on exactly the mismatches that matter. */
 def cargoRunFragment(arg: String, expect: String): String =
-  val a = shquote(unquote(arg))
+  cargoRunFragmentArgs(List(arg), expect)
+
+/** The same check for a program invoked with SEVERAL arguments. Arity is part of the criterion
+  * and the single-string form could not express it: measured end-to-end 2026-08-04, "cargo run
+  * -- 3 4 must print 7" derived one literal `'3 4'`, which a correct two-argument program
+  * rejects — FAILED reported on work that was right. */
+def cargoRunFragmentArgs(args: List[String], expect: String): String =
+  val a = args.map(x => shquote(unquote(x))).mkString(" ")
+  val shown = shquote(args.map(x => unquote(x)).mkString(" "))
   val e = shquote(unquote(expect))
   "{ out=$(cargo run -q -- " + a + ") && [ \"$out\" = " + e + " ] || " +
-  "{ printf 'cargo run -- %s printed <%s>; expected <%s>\\n' " + a + " \"$out\" " + e + " >&2; exit 1; }; }"
+  "{ printf 'cargo run -- %s printed <%s>; expected <%s>\\n' " + shown + " \"$out\" " + e + " >&2; exit 1; }; }"
 
 def taskMentionsCargo(task: String): Boolean =
   val p = task.toLowerCase()
@@ -131,8 +189,17 @@ def deriveCheck(endpoint: AgentEndpoint, model: String, task: String): Option[St
     else
       val head = List("cargo build -q")
       val withTest = if j.get("cargo_test").asBool then head :+ "cargo test -q" else head
+      // `args` carries the arity the single string could not; `arg` stays valid as ONE argument.
       val runs = j.get("run").asList.map { r =>
-        cargoRunFragment(r.get("arg").asString, r.get("expect").asString)
+        val listed = r.get("args").asList.map(v => v.asString).filter(x => x != "")
+        val argv = if listed.nonEmpty then listed
+                   else if r.get("arg").asString != "" then List(r.get("arg").asString)
+                   else List()
+        if argv.isEmpty then ""
+        else
+          // Arity comes from the task's own punctuation when the task states the example.
+          val joined = argv.map(x => unquote(x)).mkString(" ")
+          cargoRunFragmentArgs(taskArgvFor(task, joined).getOrElse(argv), r.get("expect").asString)
       }.filter(f => f != "")
       Some((withTest ++ runs).mkString(" && "))
 

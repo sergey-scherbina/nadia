@@ -9,6 +9,32 @@ class VerifySuite extends munit.FunSuite:
 
   private def tmp(): Path = Files.createTempDirectory("verify")
 
+  test("arity comes from the task, not from the model"):
+    // Both directions, both measured end-to-end on 2026-08-04 with the same 4B model: asked for
+    // one string it merged two arguments, asked for a list it split a quoted one into five. The
+    // task said which it was, in its own punctuation, in both cases.
+    val two = "print the sum of two arguments: cargo run -- 3 4 must print 7"
+    assertEquals(Verify.taskArgvFor(two, "3 4"), Some(List("3", "4")))
+    val one = """an RPN calculator: cargo run -- "3 4 + 2 *" must print 14"""
+    assertEquals(Verify.taskArgvFor(one, "3 4 + 2 *"), Some(List("3 4 + 2 *")))
+    // A value the task never states leaves the model's grouping alone rather than inventing one.
+    assertEquals(Verify.taskArgvFor(two, "5 6"), None)
+    assertEquals(Verify.shellLex(""" "3 4 + 2 *" must print 14"""), List("3 4 + 2 *", "must", "print", "14"))
+    assertEquals(Verify.shellLex("""a "" b"""), List("a", "", "b"))
+
+  test("arity is part of the criterion"):
+    // Found END TO END on 2026-08-04 by this implementation, not by review: for "cargo run -- 3 4
+    // must print 7" the model answered with both numbers in one string, the check ran
+    // `cargo run -q -- '3 4'` against a correct two-argument program, and the gate reported FAILED
+    // after both repair rounds. The twin of this assertion lives in rozum-agent's verify.rs.
+    val two = Verify.cargoRunFragmentArgs(List("3", "4"), "7")
+    assert(two.contains("cargo run -q -- '3' '4'"), two)
+    // The other half, and why arity cannot be guessed from whitespace: this one really is single.
+    val one = Verify.cargoRunFragmentArgs(List("3 4 + 2 *"), "14")
+    assert(one.contains("cargo run -q -- '3 4 + 2 *'"), one)
+    // And the message names the whole command line, which is what the repair round reads.
+    assert(two.split("printf")(1).contains("'3 4'"), two)
+
   test("a delimiting quote is not part of the argument"):
     // The measured case: the task wrote `cargo run -- "3 4 + 2 *"`, the model returned the
     // argument the way the task spelled it, and the check then demanded a program that accepts a

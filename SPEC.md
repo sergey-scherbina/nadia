@@ -231,11 +231,29 @@ itself, and the run is judged against it:
    the shell command from it. The model never writes shell, so it cannot inject
    any; every string it supplies is quoted into a literal.
 2. **Check.** Run that command in the workspace after the agent stops. Its exit
-   status decides, not the model's summary.
+   status decides, not the model's summary — and it runs **whatever the stop reason
+   was**. A run that exhausted its budget is the one an operator has most doubt
+   about; skipping its check to report "not verified" answers the wrong question
+   (measured 2026-08-04: a derived check discarded unrun, reported as "no
+   machine-checkable criterion", for a program that printed nothing). What a
+   non-finished run does not get is a repair round or a judge — there is no budget
+   to repair with, and a model's opinion about an interrupted attempt is worth less
+   than the command we already have. A run that satisfied the criterion and *then*
+   ran out of budget has finished the task: the check decides in both directions.
 3. **Repair.** A failure goes back as the next turn carrying **the command and
    what it actually printed** — not "it failed", which is not something a model
    can act on. Bounded (default 2 rounds); a model that has not converged in two
    is not converging.
+
+**Arity belongs to the task, not to the model.** Where the task states an example,
+the argument list is read from the task's own punctuation — `cargo run -- 3 4` is two
+arguments and `cargo run -- "3 4 + 2 *"` is one — by lexing what follows `cargo run --`
+with shell rules. The model says *which* example and *what output*; it is not asked to
+shell-lex, and it gets it wrong in both directions when it is (measured 2026-08-04: the
+two numbers merged into one argument, and the one quoted argument split into five).
+Each mistake fails a program that does exactly what was asked, which is the expensive
+kind of gate defect: the operator is told correct work is broken, and the model is sent
+to break it.
 
 Three rules make it honest rather than theatre:
 

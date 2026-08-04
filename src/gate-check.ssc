@@ -18,7 +18,7 @@ Only the rules `SPEC.md` §3.1 makes **contract** are checked — the ones where
 implementations disagreeing means one of them is a bug. Wording and rounds are policy and
 belong to each front-end.
 
-[unquote, cargoRunFragment, isHallucinatedCargoCheck, misplacedProject, cargoFloor, runCheck](gate.ssc)
+[unquote, cargoRunFragment, cargoRunFragmentArgs, shellLex, taskArgvFor, isHallucinatedCargoCheck, misplacedProject, cargoFloor, runCheck](gate.ssc)
 [exit](std/os.ssc)
 
 ```scalascript
@@ -52,6 +52,24 @@ val frag = cargoRunFragment("\"3 4 + 2 *\"", "\"14\"")
 check("fragment carries the value, not the spelling", frag.contains("'3 4 + 2 *'"))
 check("fragment carries the expectation", frag.contains("'14'"))
 check("fragment prints both on a mismatch", frag.contains("printed") && frag.contains("expected"))
+
+// Arity is part of the criterion. Found END TO END on 2026-08-04, not by review: for the task
+// "cargo run -- 3 4 must print 7" the model answered with both numbers in one string, the check
+// ran `cargo run -q -- '3 4'` against a correct two-argument program, and the gate reported
+// FAILED after spending both repair rounds. `cargo run -- 3 4` printed 7 by hand.
+val two = cargoRunFragmentArgs(List("3", "4"), "7")
+check("two arguments stay two", two.contains("cargo run -q -- '3' '4'"))
+val one = cargoRunFragmentArgs(List("3 4 + 2 *"), "14")
+check("one argument with spaces stays one", one.contains("cargo run -q -- '3 4 + 2 *'"))
+check("the message names the whole command line", two.contains("'3 4'"))
+
+// Arity comes from the TASK, not from the model — measured in both directions on 2026-08-04.
+val twoTask = "print the sum of two arguments: cargo run -- 3 4 must print 7"
+val oneTask = "an RPN calculator: cargo run -- \"3 4 + 2 *\" must print 14"
+eq("the task's two arguments win", taskArgvFor(twoTask, "3 4").getOrElse(List()).mkString("|"), "3|4")
+eq("the task's ONE quoted argument wins", taskArgvFor(oneTask, "3 4 + 2 *").getOrElse(List()).mkString("|"), "3 4 + 2 *")
+check("a value the task never states is left alone", taskArgvFor(twoTask, "5 6").isEmpty)
+eq("the lexer groups what the quotes group", shellLex("\"3 4 + 2 *\" must print 14").mkString("|"), "3 4 + 2 *|must|print|14")
 
 // An invented cargo check is recognized: no manifest, and a task that never asked for Rust.
 check("invented cargo check is dropped",

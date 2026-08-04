@@ -1,5 +1,39 @@
 # Changelog
 
+## gate-e2e — the two ported gates meet a model, and two defects meet the light
+Completed: 2026-08-04
+
+The Scala 3 and ScalaScript gates were closed on 9 unit tests and 18 pure contract rules; neither
+had ever run against a model. The first end-to-end run failed a correct program, and the second
+found a check that was derived and then thrown away.
+
+**BUG-018 — the gate failed correct work.** For "cargo run -- 3 4 must print 7" the derived check
+ran `cargo run -q -- '3 4'`: both numbers as one argument. The program was right — `cargo run -- 3 4`
+printed 7 by hand — and the gate spent both repair rounds and reported FAILED. The schema could not
+express arity, and stripping the task's delimiting quotes (correct on its own) had removed the only
+signal that distinguishes one quoted argument from two bare ones. Asking the model for a LIST
+instead traded the bug for its mirror image, measured on the RPN task: it split `"3 4 + 2 *"` into
+five arguments. So arity now comes from the TASK — `shellLex` + `taskArgvFor` read the argument list
+out of the task's own punctuation, and the model is left with what it is good at: which example, and
+what it should print.
+
+**BUG-019 — the run with the most doubt got the least verification.** A run that stopped for any
+reason other than "finished" skipped the check it had already derived and printed, and reported
+`⚠ not checked`. Measured: an RPN attempt exhausted its steps and left a program that printed
+nothing for the invocation the task named; the operator was told the task had no machine-checkable
+criterion. The check now runs whatever the stop reason was, while the judge still stands down and
+no repair round is spent on an agent with no budget. The exit code follows in both directions: a
+run that satisfied the criterion and then ran out of steps exits 0 and says so.
+
+**Both ports were already right about BUG-019** — only the Rust reference had the early break.
+Implementing a contract twice is a way of reading it that review is not.
+
+Verdicts, all hand-checked in the workspace afterwards: Rust `sum` ✔ 9 s, `rpn` ✔ 62 s;
+Scala 3 `sum` ✔ 12 s (was 59 s and a false FAILED); ScalaScript `sum` ✔ 13 s on a freshly rebuilt
+toolchain, because the one warning that side prints is the one this project has already been
+burned by ignoring. The budget-exhausted path was proven directly, both halves: wrong artifact →
+`✘` with what it printed, rc=1; right artifact → `✔`, rc=0.
+
 ## feat: total fs reads (`nadia.fsx`), and the tool-surface defect they uncovered
 Completed: 2026-08-04
 

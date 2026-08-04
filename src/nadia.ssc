@@ -286,6 +286,7 @@ else if mode == "run" then
       case None    => ()
     var r = runOnce(sb, endpoint, model, task, maxSteps, mcpTools)
     var failedCheck = false
+    var passedCheck = false
     var round = 0
     var repairing = true
     while repairing && round < gateRounds() do
@@ -295,6 +296,7 @@ else if mode == "run" then
           val (passed, output) = runCheck(c, sb.root)
           if passed then
             println("nadia: ✔ проверка прошла: " + c)
+            passedCheck = true
             repairing = false
           else if round + 1 >= gateRounds() then
             println("nadia: ✘ проверка НЕ прошла: " + c + "\n" + output)
@@ -313,6 +315,12 @@ else if mode == "run" then
     // rc=2 means infrastructure rather than a model that gave up.
     if r.stop == "Done" then exit(0)
     else if r.stop == "Error" then exit(2)
+    // The check decides in BOTH directions: an agent that satisfied the criterion and then ran
+    // out of steps has done the task, and reporting that as a failure would be the same mistake
+    // as trusting a model that says it finished.
+    else if passedCheck then
+      println("nadia: budget exhausted, but the check passed")
+      exit(0)
     else exit(1)
 else
   println("unknown mode `" + mode + "`\n\n" + usage)

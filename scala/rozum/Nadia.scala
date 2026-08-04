@@ -54,8 +54,15 @@ object Nadia:
     r.stop match
       case Stop.Done => 0
       case Stop.BudgetSteps | Stop.BudgetTime =>
-        Console.err.println(s"nadia: budget exhausted after ${r.steps} steps")
-        1
+        // The check decides in BOTH directions. An agent that satisfied the acceptance criterion
+        // and then ran out of steps has done the task; calling that a failure would be the same
+        // mistake as trusting a model that says it finished.
+        if gate.passed.contains(true) then
+          Console.err.println(s"nadia: budget exhausted after ${r.steps} steps — but the check passed")
+          0
+        else
+          Console.err.println(s"nadia: budget exhausted after ${r.steps} steps")
+          1
       case Stop.Error(m) =>
         Console.err.println(s"nadia: $m")
         2
