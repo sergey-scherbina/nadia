@@ -1,0 +1,87 @@
+---
+name: nadia-fsx-check
+version: 0.1.0
+description: Runs nadia.fsx against the cases that raise with the raw std.fs primitives; exits non-zero if the contract changed.
+---
+
+# Contract check for `nadia.fsx`
+
+```bash
+ssc run src/fsx-check.ssc          # exit 0 = the contract holds
+```
+
+Each case here is one that **raises** when the raw `std.fs` primitive is called instead —
+which is the whole reason the module exists. This side of the project has no test harness
+(`BACKLOG.md` `ssc-test-harness`), so the contract runs as a script.
+
+The checks use a directory that does not exist and one that does, and they cover the case
+the miss actually happened on: a path that was there when the code was written and is gone
+by the time the code runs.
+
+[entriesOf, textOf, textOr, isDirSafe, isFileSafe](fsx.ssc)
+[writeFile, mkdirs, deleteFile](std/fs.ssc)
+[exit](std/os.ssc)
+
+```scalascript
+var failures = 0
+
+def check(name: String, ok: Boolean): Unit =
+  if ok then println("  ok   " + name)
+  else
+    println("  FAIL " + name)
+    failures = failures + 1
+
+val missing = "/tmp/nadia-fsx-check-does-not-exist"
+val root    = "/tmp/nadia-fsx-check"
+val file    = root + "/a.txt"
+val empty   = root + "/empty.txt"
+
+mkdirs(root)
+writeFile(file, "hello")
+writeFile(empty, "")
+
+println("nadia.fsx — contract check")
+
+// The four that raise on the raw primitives. This is the module's entire reason to exist.
+check("entries of a missing directory are empty", entriesOf(missing).length == 0)
+check("text of a missing file is None", textOf(missing).isEmpty)
+check("textOr of a missing file is the fallback", textOr(missing, "d") == "d")
+check("isDirSafe on a missing path is false", !isDirSafe(missing))
+check("isFileSafe on a missing path is false", !isFileSafe(missing))
+
+// And they must still tell the truth about things that DO exist — a total function that
+// always answers "nothing" would pass every check above and be useless.
+check("entries of a real directory are found", entriesOf(root).length == 2)
+check("text of a real file is its content", textOf(file) == Some("hello"))
+check("textOr of a real file ignores the fallback", textOr(file, "d") == "hello")
+check("isDirSafe on a real directory is true", isDirSafe(root))
+check("isFileSafe on a real file is true", isFileSafe(file))
+
+// An EMPTY file is not a missing one. This is why textOf returns Option rather than "".
+check("an empty file reads as Some(\"\"), not as None", textOf(empty) == Some(""))
+
+// A directory is not a file and a file is not a directory — the predicates must not confuse
+// the two, or `entriesOf(some/file.txt)` would raise again on the way in.
+check("a file is not a directory", !isDirSafe(file))
+check("a directory is not a file", !isFileSafe(root))
+check("entries of a path that is a FILE are empty", entriesOf(file).length == 0)
+
+// The measured case: the path was there when the code was written and is gone when it runs.
+val doomed = root + "/doomed"
+mkdirs(doomed)
+check("a directory that exists has entries readable", isDirSafe(doomed))
+deleteFile(doomed)
+check("and once it is gone, the same call answers empty instead of raising",
+      entriesOf(doomed).length == 0)
+
+deleteFile(file)
+deleteFile(empty)
+
+println("")
+if failures == 0 then
+  println("contract holds")
+  exit(0)
+else
+  println(failures.toString + " case(s) changed — docs/specs/total-fs.md and this file disagree")
+  exit(1)
+```

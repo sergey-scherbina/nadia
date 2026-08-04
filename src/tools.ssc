@@ -21,7 +21,8 @@ unpredictable local model at a filesystem.
 
 [agentTool, toolOk, toolError, objectSchema, AgentTool](std/agent.ssc)
 [jsonValue, jStr, jNum, jBool, jField, jObj, jArr](std/json.ssc)
-[readFile, writeFile, exists, isDir, listDir, mkdirs, resolveWithin](std/fs.ssc)
+[writeFile, exists, isDir, listDir, mkdirs, resolveWithin](std/fs.ssc)
+[textOf, isDirSafe, entriesOf](fsx.ssc)
 [exec, ProcessOptions, ProcessResult](std/process.ssc)
 
 ```scalascript
@@ -75,9 +76,16 @@ def readFileTool(sb: Sandbox): AgentTool =
     resolveIn(sb, path) match
       case None => toolError("path " + path + " is outside the workspace — refused")
       case Some(full) =>
-        if !exists(full) then toolError("read " + path + ": no such file")
-        else
-          val text = readFile(full)
+        // `textOf`, not exists+readFile. Two reasons, and the second is a live defect the other
+        // two implementations do not have: `exists` is true for a DIRECTORY, so a model that
+        // asks to read one used to kill the run with "Is a directory" instead of getting a
+        // sentence it could act on — and SPEC §2 says a tool error is the next prompt, never an
+        // exception. (The first reason: exists-then-read is a race with the model's own `bash`.)
+        textOf(full) match
+          case None =>
+            toolError("read " + path + ": " +
+                      (if isDirSafe(full) then "is a directory, not a file" else "no such file"))
+          case Some(text) =>
           toolOk(jObj(List(
             jField("path", jStr(path)),
             jField("content", jStr(clip(text))),
@@ -129,9 +137,11 @@ def editFileTool(sb: Sandbox): AgentTool =
     resolveIn(sb, path) match
       case None => toolError("path " + path + " is outside the workspace — refused")
       case Some(full) =>
-        if !exists(full) then toolError("read " + path + ": no such file")
-        else
-          val text = readFile(full)
+        textOf(full) match
+          case None =>
+            toolError("edit " + path + ": " +
+                      (if isDirSafe(full) then "is a directory, not a file" else "no such file"))
+          case Some(text) =>
           val hits = countOccurrences(text, oldS)
           // The single-occurrence rule is the whole point of this tool: replacing the
           // first of several identical lines lets a model report success for a fix it
@@ -164,7 +174,7 @@ def listDirTool(sb: Sandbox): AgentTool =
         if !isDir(full) then toolError("list " + path + ": not a directory")
         else toolOk(jObj(List(
           jField("path", jStr(path)),
-          jField("entries", jArr(listDir(full).map(e => jStr(e))))
+          jField("entries", jArr(entriesOf(full).map(e => jStr(e))))
         )))
   }
 

@@ -1,0 +1,75 @@
+---
+name: nadia-fsx
+version: 0.1.0
+description: Total filesystem reads over std.fs, each carrying the failure contract std does not state.
+package: nadia.fsx
+exports:
+  - entriesOf
+  - textOf
+  - textOr
+  - isDirSafe
+  - isFileSafe
+---
+
+# `nadia.fsx` — the reads that must not raise
+
+Spec: [`docs/specs/total-fs.md`](../docs/specs/total-fs.md).
+
+`std.fs`'s failure behaviour is **undocumented and backend-dependent**: `specs/std-fs-os.md`
+maps `listDir` to `Files.list` on the JVM, `fs.readdirSync` on Node and `fs::read_dir` in
+Rust, and says nothing about a missing path. The first two raise; the third returns a
+`Result`. So the contract a caller programs against is "whatever the host does", which is
+not a contract, and every call site has to remember to guard.
+
+That convention held twelve times out of thirteen here. The miss was not random: it was
+`misplacedProject`, which runs **only after an acceptance check has already failed** — and
+one way a check fails is that the workspace is gone (rozum BUG-017, a sandbox that let an
+agent delete its own root). The single unguarded call sat exactly where the directory is
+most likely to be missing. Partial operations get used as if they were total in precisely
+the code that runs when things have already gone wrong, and that code is the least tested.
+
+**This is not a total-by-default replacement.** Totality hides a typo — `entriesOf("scr")`
+returning `[]` is indistinguishable from an empty `src` — which is the right answer for a
+diagnostic and the wrong one for a tool the model drives, where the model needs to be told
+*why* it got nothing. So the caller picks, and the pick is visible at the call site: reach
+for `entriesOf` to say "empty is fine here", and for the raw `listDir` behind a predicate to
+say "this must exist, and I will explain it if it doesn't".
+
+One honest limitation: a permission denial and a missing file give the same answer, because
+`std.fs` offers no way to tell them apart. Asking for that is part of the upstream proposal.
+
+[exists, isDir, isFile, listDir, readFile](std/fs.ssc)
+
+```scalascript
+/** The entries of `dir`, or `[]` when it is missing or is not a directory.
+  *
+  * For code that DESCRIBES a directory — a diagnostic, a survey, a "what is here" — where
+  * "nothing" and "no such place" lead to the same next step. When they do not, use
+  * `isDirSafe` and say which happened. */
+def entriesOf(dir: String): List[String] =
+  if isDirSafe(dir) then listDir(dir) else List()
+
+/** The text of `file`, or `None` when it is missing or is not a regular file.
+  *
+  * `None` rather than `""`: an empty file is a real thing, and a caller that cannot tell it
+  * from a missing one will eventually act on the difference. */
+def textOf(file: String): Option[String] =
+  if isFileSafe(file) then Some(readFile(file)) else None
+
+/** The text of `file`, or `fallback`. For a caller that has a sensible default and does not
+  * need to know which case it got. */
+def textOr(file: String, fallback: String): String =
+  textOf(file) match
+    case Some(t) => t
+    case None    => fallback
+
+/** `isDir` that answers `false` instead of raising on a path that cannot be examined at all.
+  *
+  * A predicate that can raise is not a predicate: the caller ends up guarding the guard. */
+def isDirSafe(path: String): Boolean =
+  if !exists(path) then false else isDir(path)
+
+/** `isFile` with the same promise. */
+def isFileSafe(path: String): Boolean =
+  if !exists(path) then false else isFile(path)
+```

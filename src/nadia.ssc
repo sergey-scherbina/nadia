@@ -17,7 +17,8 @@ policy, and the interface.
 [helpAll, helpOne, unknownCommand](commands.ssc)
 [McpServerSpec, parseMcpConfig, selectServers, connectServer, isMcpTool, connectedLine, stdioRefusal](mcp.ssc)
 [deriveCheck, cargoFloor, runCheck, repairPrompt, isHallucinatedCargoCheck, gateEnabled, gateRounds](gate.ssc)
-[readFile, exists](std/fs.ssc)
+[exists](std/fs.ssc)
+[isFileSafe, textOr](fsx.ssc)
 [args, env, envOrElse, cwd, exit, readLine](std/os.ssc)
 
 ```scalascript
@@ -135,7 +136,9 @@ def mcpConfigPath(flags: Flags, root: String): String =
   if flags.mcpConfig != "" then flags.mcpConfig else root + "/.mcp.json"
 
 def loadServers(path: String): Either[String, List[McpServerSpec]] =
-  if exists(path) then Right(parseMcpConfig(readFile(path)))
+  // `textOf` rather than exists+readFile: two calls with a gap between them is a race, and the
+  // gap is where a config gets rewritten while nadia is starting.
+  if isFileSafe(path) then Right(parseMcpConfig(textOr(path, "{}")))
   else Left("no MCP config at " + path + " (pass --mcp-config)")
 
 /** Connect what was asked for, or exit 2 naming the server that would not start: a run

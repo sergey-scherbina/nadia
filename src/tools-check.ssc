@@ -1,0 +1,97 @@
+---
+name: nadia-tools-check
+version: 0.1.0
+description: Drives the tool handlers against the inputs a model actually sends wrong; a tool must answer, never raise.
+---
+
+# Contract check for the tool surface
+
+```bash
+ssc run src/tools-check.ssc          # exit 0 = every wrong input got an ANSWER
+```
+
+`SPEC.md` §2: *a tool error is not an exception — it is the next prompt.* A handler that
+raises does not fail the call, it kills the run, and the model never gets to correct itself.
+
+This check exists because that promise was broken here and nowhere else. `read_file` and
+`edit_file` guarded with `exists`, which is **true for a directory** — so a model asking to
+read a directory died with `Is a directory` while the Rust twin returned
+`read X: Is a directory (os error 21)` and the Scala 3 twin `read X: …`. Both of those are
+sentences a model can act on. Found 2026-08-04 while making the fs reads total.
+
+The cases are the ones a model gets wrong on its own: a directory where a file was meant, a
+path that is not there, and a path outside the jail.
+
+[Sandbox, nadiaTools](tools.ssc)
+[mkdirs, writeFile, deleteFile](std/fs.ssc)
+[exit](std/os.ssc)
+
+```scalascript
+var failures = 0
+
+def check(name: String, ok: Boolean): Unit =
+  if ok then println("  ok   " + name)
+  else
+    println("  FAIL " + name)
+    failures = failures + 1
+
+val root = "/tmp/nadia-tools-check"
+mkdirs(root + "/adir")
+writeFile(root + "/a.txt", "hello")
+
+val sb = Sandbox(root)
+val tools = nadiaTools(sb)
+
+def call(name: String, argsJson: String): (Boolean, String) =
+  tools.find(t => t.name == name) match
+    case Some(t) =>
+      val r = t.handler(argsJson)
+      (r.isError, r.contentJson)
+    case None => (true, "no such tool " + name)
+
+println("nadia tools — every wrong input must ANSWER, not raise")
+
+// The defect this file was written for: a directory where a file was meant.
+val (dirErr, dirMsg) = call("read_file", "{\"path\":\"adir\"}")
+check("read_file on a directory answers with an error", dirErr)
+check("...and the error says WHICH mistake it was", dirMsg.contains("directory"))
+
+val (editErr, editMsg) =
+  call("edit_file", "{\"path\":\"adir\",\"old_string\":\"a\",\"new_string\":\"b\"}")
+check("edit_file on a directory answers with an error", editErr)
+check("...and names the mistake too", editMsg.contains("directory"))
+
+// A path that is not there — the case that was already handled, kept so a fix cannot
+// regress it into the directory branch.
+val (missErr, missMsg) = call("read_file", "{\"path\":\"nope.txt\"}")
+check("read_file on a missing path answers with an error", missErr)
+check("...and says no such file, not 'is a directory'",
+      missMsg.contains("no such file") && !missMsg.contains("directory"))
+
+// Outside the jail: refused, and the refusal says so rather than clamping.
+val (outErr, outMsg) = call("read_file", "{\"path\":\"../../etc/passwd\"}")
+check("a path outside the workspace is refused", outErr)
+check("...and the refusal says outside, not 'no such file'", outMsg.contains("outside"))
+
+// list_dir on a FILE, and on nothing at all.
+val (ldErr, _) = call("list_dir", "{\"path\":\"a.txt\"}")
+check("list_dir on a file answers with an error", ldErr)
+val (ldMissErr, _) = call("list_dir", "{\"path\":\"nope\"}")
+check("list_dir on a missing path answers with an error", ldMissErr)
+
+// And the happy paths still work — a tool that errors on everything would pass all of the above.
+val (okErr, okMsg) = call("read_file", "{\"path\":\"a.txt\"}")
+check("read_file on a real file succeeds", !okErr && okMsg.contains("hello"))
+val (lsErr, lsMsg) = call("list_dir", "{\"path\":\".\"}")
+check("list_dir on the root succeeds", !lsErr && lsMsg.contains("a.txt"))
+
+deleteFile(root + "/a.txt")
+
+println("")
+if failures == 0 then
+  println("the tool surface answers")
+  exit(0)
+else
+  println(failures.toString + " case(s) raise or mislead — SPEC §2 says a tool error is the next prompt")
+  exit(1)
+```
