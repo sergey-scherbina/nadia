@@ -26,8 +26,31 @@ object Nadia:
       mcp: List[Mcp.Connected] = Nil
   ): Int =
     val tools = Tools.all(sb) ++ mcp.flatMap(_.tools)
-    val r = AgentLoop.run(client, systemPrompt(sb.root.toString), task, tools, budget)
+    // What "done" means, decided before the run (SPEC §3.1). One model call; None when the task
+    // has no machine-checkable criterion, which is an answer rather than a failure.
+    val check = Gate.derive(client, task, sb.root)
+    check.foreach(c => Console.err.println(s"nadia: acceptance check — $c"))
+
+    var r = AgentLoop.run(client, systemPrompt(sb.root.toString), task, tools, budget)
+    var gate = Gate.Report()
+    var round = 0
+    var repairing = true
+    while repairing && round < Gate.rounds do
+      Gate.check(client, task, sb.root, check, r.stop == Stop.Done) match
+        case (rep, Some(prompt)) =>
+          gate = rep.copy(rounds = round)
+          Console.err.println(s"nadia: check failed — repair round ${round + 1}")
+          r = AgentLoop.resume(client, r.transcript :+ Wire.user(prompt), tools, budget)
+          round += 1
+        case (rep, None) =>
+          gate = rep.copy(rounds = round)
+          repairing = false
+    Console.err.println(s"nadia: ${gate.summary}")
+
     if asJson then println(ujson.write(report(r))) else println(r.text)
+    // A run whose check FAILED did not finish, whatever the model says about it. Exit 1 — the
+    // "gave up" code the harness reads — because success is not the model's to declare.
+    if gate.passed.contains(false) then return 1
     r.stop match
       case Stop.Done => 0
       case Stop.BudgetSteps | Stop.BudgetTime =>
