@@ -213,6 +213,53 @@ file tree.
    (`rozum:docs/specs/` loop-breaker work): the same `(tool, arguments)` pair
    ≥4 times in the last 12 calls, and edit-churn on one file. A 4B model that
    has lost the thread does not stop on its own.
+6. **The verify gate.** Success is not the model's to declare. §3.1 covers this.
+
+### 3.1 The verify gate — what "done" means
+
+The prompt already tells the model to run the build and read the output, and a 4B
+model does exactly that and no more: it verifies that the program *builds and
+runs*, because nobody wrote down what the right answer is. Measured — a working
+RPN calculator whose own printout read `4 + 4 = 7`, reported as finished, because
+building and running had both succeeded.
+
+So the acceptance criterion is written down, **before the run**, by the model
+itself, and the run is judged against it:
+
+1. **Derive.** Ask the model to formalize the task into structured data —
+   `{"checkable":bool, "cargo_test":bool, "run":[{"arg","expect"}]}` — and BUILD
+   the shell command from it. The model never writes shell, so it cannot inject
+   any; every string it supplies is quoted into a literal.
+2. **Check.** Run that command in the workspace after the agent stops. Its exit
+   status decides, not the model's summary.
+3. **Repair.** A failure goes back as the next turn carrying **the command and
+   what it actually printed** — not "it failed", which is not something a model
+   can act on. Bounded (default 2 rounds); a model that has not converged in two
+   is not converging.
+
+Three rules make it honest rather than theatre:
+
+- **`checkable: false` is a valid answer.** A task with no machine-checkable
+  criterion ("explain how X works", "make the message clearer") MUST NOT get an
+  invented one. The failure this prevents was real: "reply with the word pong"
+  became `cargo run -- pong == gnop`, and the run then failed forever against a
+  check nobody asked for. An implementation MUST also drop a derived cargo check
+  for a workspace with no manifest and a task that never mentioned Rust.
+- **Unverified is reported as unverified.** Where nothing was checked, the run
+  says so — it does not read as a pass. Silence about verification is what let a
+  wrong answer look like a finished task in the first place.
+- **A failed check means the task is not done**, whatever the model says. Batch
+  exits non-zero (§4.1); a front-end shows the check and its output.
+
+Where nothing deterministic exists, an implementation MAY consult a **semantic
+judge** — an independent model reading the task and the code. Its *unknown* MUST
+NOT count as a pass: a bounded caller can escalate or report an honest unverified
+result, but it may not claim correctness it has no evidence for.
+
+**Divergence, stated:** implemented in the Rust one (`crates/nadia/src/gate.rs`
+over `rozum-agent`'s shared primitives, which `rozum launch` uses too — one
+definition, two consumers). The ScalaScript and Scala 3 ones do not have it yet.
+That is a gap in them, not an option: this section is the contract.
 
 ## 4. Modes
 
