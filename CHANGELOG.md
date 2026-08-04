@@ -1,5 +1,37 @@
 # Changelog
 
+## feat: the verify gate in the other two implementations
+Completed: 2026-08-04
+
+`SPEC.md` §3.1 was written when only the Rust implementation had the gate, and it
+said so plainly: "the ScalaScript and Scala 3 ones do not have it yet. That is a
+gap in them, not an option." This closes the gap, and the section no longer needs
+the caveat.
+
+**Scala 3** — `scala/sdk/Verify.scala` (generic: a `ModelClient` and a directory,
+nothing about nadia or a gateway) plus `scala/rozum/Gate.scala` (policy: rounds,
+wording, opt-out, exit code). Same split as the Rust one, for the same reason: the
+primitives are shared and the policy belongs to the application. Nine tests, each
+a deliberate twin of a Rust one — where they disagree, one of them is a bug.
+
+**ScalaScript** — `src/gate.ssc` over `std.agent`, ~150 lines against Scala 3's
+~230 for the identical contract, and the difference is exactly what `std.agent`
+and `std.process` already provide. The same finding §0 records for the loop, now
+for the gate.
+
+Both accuracy rules the Rust one paid for are in from the start: a symmetric pair
+of delimiting quotes is not part of the argument, and a project the model left one
+level down is NAMED in the repair prompt rather than accommodated by moving the
+check into it.
+
+**How each proves its share.** Rust and Scala 3: unit tests. ScalaScript has no
+test harness in this repository, so `src/gate-check.ssc` runs the same rules and
+exits non-zero when one changed — and it earned its keep on the first run, finding
+that `listDir` raises on a missing directory while `misplacedProject` runs on
+exactly the failure path where the workspace may be gone. A diagnostic that throws
+while diagnosing is worse than none. The missing harness is recorded in
+`BACKLOG.md` rather than papered over.
+
 ## feat: MCP servers as tools, and `help` / `?` that answer properly
 Completed: 2026-08-01
 
