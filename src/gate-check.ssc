@@ -18,7 +18,7 @@ Only the rules `SPEC.md` §3.1 makes **contract** are checked — the ones where
 implementations disagreeing means one of them is a bug. Wording and rounds are policy and
 belong to each front-end.
 
-[unquote, cargoRunFragment, isHallucinatedCargoCheck, misplacedProject, cargoFloor](gate.ssc)
+[unquote, cargoRunFragment, isHallucinatedCargoCheck, misplacedProject, cargoFloor, runCheck](gate.ssc)
 [exit](std/os.ssc)
 
 ```scalascript
@@ -66,6 +66,14 @@ check("no floor without a manifest", cargoFloor("/tmp/nadia-gate-check-nonexiste
 // A project one level down is NAMED (the repair prompt uses this); ambiguity says nothing.
 check("nothing to report for a directory that does not exist",
       misplacedProject("/tmp/nadia-gate-check-nonexistent").isEmpty)
+
+// The two that shell out. The pure rules above all passed while `runCheck` was calling `exec`
+// with the wrong arity — a defect only a real call could show, and it took a live run to find.
+val (okTrue, _) = runCheck("true", "/tmp")
+check("a passing command reads as passed", okTrue)
+val (okFalse, out) = runCheck("echo hello; exit 1", "/tmp")
+check("a failing command reads as failed", !okFalse)
+check("and the repair round gets what it printed", out.contains("hello"))
 
 println("")
 if failures == 0 then

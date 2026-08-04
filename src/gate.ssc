@@ -111,7 +111,8 @@ def isHallucinatedCargoCheck(check: String, root: String, task: String): Boolean
 def cargoFloor(root: String): Option[String] =
   if !exists(root + "/Cargo.toml") then None
   else
-    val probe = exec("grep -rqs '#\\[test\\]' src tests 2>/dev/null", ProcessOptions(cwd = root))
+    val probe = exec("sh", List("-c", "grep -rqs '#\\[test\\]' src tests 2>/dev/null"),
+                     ProcessOptions(cwd = Some(root)))
     if probe.exitCode == 0 then Some("cargo build -q && cargo test -q") else Some("cargo build -q")
 
 /** Ask the model to formalize the task, then BUILD the command from its structured answer —
@@ -137,7 +138,10 @@ def deriveCheck(endpoint: AgentEndpoint, model: String, task: String): Option[St
 /** Run the check. Returns the exit status and the tail of what it printed — the second half
   * IS the repair prompt, so cargo's progress noise goes and the diagnosis stays. */
 def runCheck(cmd: String, root: String): (Boolean, String) =
-  val r = exec(cmd, ProcessOptions(cwd = root))
+  // `exec` takes (program, args, options) and its cwd is an Option — the shell is explicit here
+  // because the derived check is a shell expression (`&&`, `$( )`, a printf fallback), not a
+  // program with arguments.
+  val r = exec("sh", List("-c", cmd), ProcessOptions(cwd = Some(root)))
   val all = r.stdout + r.stderr
   val kept = all.split("\n").toList.filter { l =>
     val t = l.trim()
