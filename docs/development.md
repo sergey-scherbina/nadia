@@ -36,7 +36,12 @@ ssc run src/nadia.ssc -- chat
 
 ```bash
 ssc run src/gate-check.ssc      # the gate's contract rules (SPEC §3.1); exit 0 = they hold
+ssc run src/fsx-check.ssc       # nadia.fsx: the reads that must not raise (docs/specs/total-fs.md)
+ssc run src/tools-check.ssc     # the tool surface: every wrong input must ANSWER, not raise
 ```
+
+Those three are what this side has instead of a test suite (`BACKLOG.md` `ssc-test-harness`).
+Run them before pushing anything that touches `src/`.
 
 Needs the `ssc` toolchain from the scalascript repository. Two conventions bite here and are
 written down where they bit:

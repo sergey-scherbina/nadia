@@ -1,5 +1,48 @@
 # Changelog
 
+## feat: total fs reads (`nadia.fsx`), and the tool-surface defect they uncovered
+Completed: 2026-08-04
+
+`std.fs`'s failure behaviour is **undocumented and backend-dependent** —
+`specs/std-fs-os.md` maps `listDir` to `Files.list` / `fs.readdirSync` /
+`fs::read_dir` and says nothing about a missing path, and those three do not
+agree: two raise, one returns a `Result`. So every caller must remember to guard,
+and that convention held here 12 times out of 13. The miss was not random: it was
+in a diagnostic, code reached only after something else has already failed — one
+way being that the workspace is gone. Partial operations get used as if they were
+total in exactly the code that runs when things are already wrong.
+
+`src/fsx.ssc` gives those reads a contract: `entriesOf` → `[]`, `textOf` →
+`Option`, `textOr(default)`, `isDirSafe`/`isFileSafe` never raise. Deliberately
+**not** total by default — a `[]` for a missing directory hides a typo, so the
+caller picks and the pick is visible at the call site, the same reasoning the path
+jail uses when it refuses rather than clamps.
+
+**The defect this found is the real result.** `read_file` and `edit_file` guarded
+with `exists`, which is **true for a directory** — so a model that asked to read a
+directory killed the agent with `Is a directory` instead of getting a sentence it
+could act on, and `SPEC.md` §2 says a tool error is the next prompt, never an
+exception. The Rust and Scala 3 implementations of the same spec answer with a
+tool error there, because their fs calls are total by construction; only this one
+raised. Fixed, and the error now says *which* mistake it was — `is a directory,
+not a file` vs `no such file`. `exists`-then-read is gone with it: that pair is
+also a race with the model's own `bash`.
+
+Two contract runs, since this side has no test harness: `src/fsx-check.ssc` (16
+cases, including a directory that disappears between two calls — the measured
+shape) and `src/tools-check.ssc` (12 cases: a directory where a file was meant, a
+missing path, a path outside the jail, and the happy paths, because a tool that
+errors on everything would pass all the rest).
+
+**Filed upstream by their procedure**, not fixed in their tree: `scalascript`
+`INBOX.md` `std-fs-failure-contract` (`ccd7a5e4d`) via `scripts/inbox-add`
+(POLICY.md P-3.10), routing left to their triager (P-3.11), and raised in their
+room because a change to a shared contract belongs there (P-5.1). Two asks: state
+the failure behaviour per function and per backend — a documentation change with a
+cross-backend correctness consequence and no runtime cost — and consider total
+variants alongside the partial ones, which is only asking that `fs` get the
+principle `std.json` and `resolveWithin` already have.
+
 ## feat: the verify gate in the other two implementations
 Completed: 2026-08-04
 
