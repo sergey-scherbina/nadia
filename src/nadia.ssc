@@ -16,6 +16,7 @@ policy, and the interface.
 [Sandbox, nadiaTools](tools.ssc)
 [helpAll, helpOne, unknownCommand](commands.ssc)
 [McpServerSpec, parseMcpConfig, selectServers, connectServer, isMcpTool, connectedLine, stdioRefusal](mcp.ssc)
+[deriveCheck, cargoFloor, runCheck, repairPrompt, isHallucinatedCargoCheck, gateEnabled, gateRounds](gate.ssc)
 [readFile, exists](std/fs.ssc)
 [args, env, envOrElse, cwd, exit, readLine](std/os.ssc)
 
@@ -33,6 +34,9 @@ def systemPrompt(root: String): String =
   "Before you claim a task is finished, verify it: run the build, the test, or the " +
   "program with `bash` and read the output. If the command failed, the task is not " +
   "finished — fix it and run it again. Never report success you have not observed.\n" +
+  "\n" +
+  "Create a project IN that directory, not under it: `cargo init` in the workspace root, " +
+  "never `cargo new <name>`, which makes a subdirectory the acceptance check cannot see.\n" +
   "\n" +
   "Read a file before editing it, and quote `old_string` exactly as it appears. Make " +
   "the smallest change that satisfies the task.\n" +
@@ -160,6 +164,16 @@ def connectRequested(flags: Flags, root: String): List[AgentTool] =
                       go(tail, acc ++ tools)
             go(chosen, List())
 
+/** The check for this run: what the task makes checkable, else the workspace's floor, else
+  * nothing. A derived cargo check for a workspace and a task that have nothing to do with Rust
+  * is dropped — the model once invented `cargo run -- pong == gnop` for a chat message. */
+def gateCheckFor(endpoint: AgentEndpoint, model: String, task: String, root: String): Option[String] =
+  if !gateEnabled() then None
+  else
+    deriveCheck(endpoint, model, task) match
+      case Some(c) => if isHallucinatedCargoCheck(c, root, task) then None else Some(c)
+      case None    => cargoFloor(root)
+
 /** `nadia mcp list` — what is configured, and why an entry cannot be connected. */
 def mcpList(flags: Flags, root: String): Unit =
   val path = mcpConfigPath(flags, root)
@@ -256,9 +270,36 @@ else if mode == "run" then
     exit(2)
   else
     val task = argv.drop(1).mkString(" ")
-    val r = runOnce(sb, endpoint, model, task, maxSteps, connectRequested(flags, root))
+    val mcpTools = connectRequested(flags, root)
+    // What "done" means, decided BEFORE the run so the run cannot influence it (SPEC §3.1).
+    val check = gateCheckFor(endpoint, model, task, sb.root)
+    check match
+      case Some(c) => println("nadia: acceptance check — " + c)
+      case None    => ()
+    var r = runOnce(sb, endpoint, model, task, maxSteps, mcpTools)
+    var failedCheck = false
+    var round = 0
+    var repairing = true
+    while repairing && round < gateRounds() do
+      check match
+        case None => repairing = false
+        case Some(c) =>
+          val (passed, output) = runCheck(c, sb.root)
+          if passed then
+            println("nadia: ✔ проверка прошла: " + c)
+            repairing = false
+          else if round + 1 >= gateRounds() then
+            println("nadia: ✘ проверка НЕ прошла: " + c + "\n" + output)
+            failedCheck = true
+            repairing = false
+          else
+            println("nadia: check failed — repair round " + (round + 1).toString)
+            r = runOnce(sb, endpoint, model, repairPrompt(c, output, sb.root), maxSteps, mcpTools)
+            round = round + 1
     renderOps(r)
     println(r.text)
+    // A run whose check FAILED did not finish, whatever the model says about it.
+    if failedCheck then exit(1)
     // The three values std.agent can return (agent.ssc): Done / MaxSteps / Error.
     // Mapped onto the exit codes scripts/bench/agentic.sh already distinguishes, where
     // rc=2 means infrastructure rather than a model that gave up.

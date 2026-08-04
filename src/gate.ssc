@@ -1,0 +1,172 @@
+---
+name: nadia-gate
+version: 0.1.0
+description: The verify-repair gate — derive what "done" means, check it, hand the real error back.
+package: nadia.gate
+exports:
+  - deriveCheck
+  - cargoFloor
+  - runCheck
+  - repairPrompt
+  - misplacedProject
+  - unquote
+  - cargoRunFragment
+  - isHallucinatedCargoCheck
+  - gateEnabled
+  - gateRounds
+---
+
+# nadia.gate — success is not the model's to declare
+
+`SPEC.md` §3.1. The prompt already tells the model to run the build and read the output,
+and a small model does exactly that and no more: it verifies that the program *builds and
+runs*, because nobody wrote down what the right answer is. Measured on the Rust twin — a
+working RPN calculator whose own printout read `4 + 4 = 7`, reported as finished.
+
+So the criterion is written down **before** the run, by the model itself, and the run is
+judged against it. Three rules are contract rather than taste, and every one of them was
+paid for:
+
+- **`checkable: false` is a valid answer** — no invented criterion. "reply with the word
+  pong" once became `cargo run -- pong == gnop`.
+- **A delimiting quote is not part of the argument.** From `cargo run -- "3 4 + 2 *"` the
+  model returns the argument the way the task spelled it; the check would then demand a
+  program that accepts a quoted argument, which nobody asked for.
+- **A project belongs in the workspace root.** `cargo new <name>` makes a subdirectory the
+  check cannot see; the repair prompt NAMES it rather than the check moving into it, which
+  would turn work delivered where nobody asked into a passing run.
+
+[AgentEndpoint, RunOptions, runAgent, AgentResult](std/agent.ssc)
+[exec, ProcessOptions, ProcessResult](std/process.ssc)
+[exists, isDir, listDir, readFile](std/fs.ssc)
+[env](std/os.ssc)
+[jsonValue](std/json.ssc)
+
+```scalascript
+val derivePrompt =
+  "Set up the acceptance CHECK for this coding task. Reply with ONLY a JSON object, no prose:\n" +
+  "{\"checkable\": <true|false>, \"cargo_test\": <true|false>, \"run\": [{\"arg\": \"<argument VALUE only>\", \"expect\": \"<exact stdout>\"}]}\n" +
+  "- \"run\": one entry per concrete example the task states as `cargo run -- X` printing `Y`.\n" +
+  "  `arg` is JUST the argument value X; `expect` is JUST Y. Omit if no example.\n" +
+  "- Quotes that DELIMIT a value in the task are not part of it: for `cargo run -- \"3 4 + 2 *\"` " +
+  "printing 14, arg is `3 4 + 2 *` and expect is `14` — no surrounding quotes in either.\n" +
+  "- cargo_test=true ONLY if the task explicitly requires a unit test to pass.\n" +
+  "- checkable=false if the task has no machine-checkable build/run/test criterion. In particular, " +
+  "if the task is NOT about a Rust program — it only asks for a chat reply, an explanation, or " +
+  "plain text (e.g. \"reply with the word pong\") — return checkable=false. The acceptance is the " +
+  "reply itself, which is NOT a build/run/test; do NOT invent a `cargo run` or an argument for it.\n\n" +
+  "Task:\n"
+
+/** The gate is opt-OUT: the failure it prevents is silent, and an unverified run looks
+  * exactly like a verified one until somebody reads the output. */
+def gateEnabled(): Boolean =
+  env("NADIA_VERIFY") match
+    case Some(v) => !(v == "0" || v == "off" || v == "false" || v == "no")
+    case None    => true
+
+/** Two, like the other two implementations: a model that has not converged in two rounds is
+  * not converging, and each round is a full turn somebody is waiting for. */
+def gateRounds(): Int =
+  env("NADIA_VERIFY_ROUNDS") match
+    case Some(v) => v.toIntOption.getOrElse(2)
+    case None    => 2
+
+/** Shell-quote, so a model-supplied string is inert inside the derived command. */
+def shquote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+/** Strip ONE symmetric pair of delimiting quotes; leave one-sided or internal quotes alone,
+  * because there the quote is data (`he said "hi"`, `"a" + "b"`). */
+def unquote(s: String): String =
+  val t = s.trim()
+  def strip(q: String): Option[String] =
+    if t.length >= 2 && t.startsWith(q) && t.endsWith(q) then
+      val inner = t.substring(1, t.length - 1)
+      if inner.contains(q) then None else Some(inner)
+    else None
+  strip("\"") match
+    case Some(v) => v
+    case None =>
+      strip("'") match
+        case Some(v) => v
+        case None    => t
+
+/** A `cargo run` check that SAYS what it saw — a silent comparison leaves the repair round
+  * with an empty error on exactly the mismatches that matter. */
+def cargoRunFragment(arg: String, expect: String): String =
+  val a = shquote(unquote(arg))
+  val e = shquote(unquote(expect))
+  "{ out=$(cargo run -q -- " + a + ") && [ \"$out\" = " + e + " ] || " +
+  "{ printf 'cargo run -- %s printed <%s>; expected <%s>\\n' " + a + " \"$out\" " + e + " >&2; exit 1; }; }"
+
+def taskMentionsCargo(task: String): Boolean =
+  val p = task.toLowerCase()
+  List("cargo", "rust", "crate", "src/main.rs", "src/lib.rs", ".rs").exists(k => p.contains(k))
+
+/** A cargo check for a workspace with no manifest and a task that never mentioned Rust is one
+  * the model invented. */
+def isHallucinatedCargoCheck(check: String, root: String, task: String): Boolean =
+  check.contains("cargo") && !exists(root + "/Cargo.toml") && !taskMentionsCargo(task)
+
+/** The floor: a cargo project must at least build. */
+def cargoFloor(root: String): Option[String] =
+  if !exists(root + "/Cargo.toml") then None
+  else
+    val probe = exec("grep -rqs '#\\[test\\]' src tests 2>/dev/null", ProcessOptions(cwd = root))
+    if probe.exitCode == 0 then Some("cargo build -q && cargo test -q") else Some("cargo build -q")
+
+/** Ask the model to formalize the task, then BUILD the command from its structured answer —
+  * the model supplies values, never shell. `None` when nothing is machine-checkable. */
+def deriveCheck(endpoint: AgentEndpoint, model: String, task: String): Option[String] =
+  val r = runAgent(endpoint, model, "You reply with JSON and nothing else.", derivePrompt + task,
+                   List(), RunOptions(temperature = 0.0, maxSteps = 1))
+  val text = r.text
+  val a = text.indexOf("{")
+  val b = text.lastIndexOf("}")
+  if a < 0 || b < a then None
+  else
+    val j = jsonValue(text.substring(a, b + 1))
+    if !j.get("checkable").asBool then None
+    else
+      val head = List("cargo build -q")
+      val withTest = if j.get("cargo_test").asBool then head :+ "cargo test -q" else head
+      val runs = j.get("run").asList.map { r =>
+        cargoRunFragment(r.get("arg").asString, r.get("expect").asString)
+      }.filter(f => f != "")
+      Some((withTest ++ runs).mkString(" && "))
+
+/** Run the check. Returns the exit status and the tail of what it printed — the second half
+  * IS the repair prompt, so cargo's progress noise goes and the diagnosis stays. */
+def runCheck(cmd: String, root: String): (Boolean, String) =
+  val r = exec(cmd, ProcessOptions(cwd = root))
+  val all = r.stdout + r.stderr
+  val kept = all.split("\n").toList.filter { l =>
+    val t = l.trim()
+    !t.startsWith("Compiling") && !t.startsWith("Finished") && !t.startsWith("Running")
+  }
+  val tail = if kept.length > 40 then kept.drop(kept.length - 40) else kept
+  (r.exitCode == 0, tail.mkString("\n"))
+
+/** The single child directory holding a Cargo.toml when the root holds none. Ambiguity gives
+  * None: a hint that names the wrong directory is worse than no hint. */
+def misplacedProject(root: String): Option[String] =
+  if exists(root + "/Cargo.toml") then None
+  else
+    val kids = listDir(root).filter(name => exists(root + "/" + name + "/Cargo.toml"))
+    if kids.length == 1 then Some(kids.head) else None
+
+/** What a failed check sends back: the command, what it printed, and — when it applies — the
+  * one diagnosis a model cannot reach by reading the error. */
+def repairPrompt(check: String, output: String, root: String): String =
+  val base =
+    "The acceptance check for this task FAILED. This is the real output, not a summary.\n\n" +
+    "$ " + check + "\n" + output + "\n\n" +
+    "Fix the cause and make the check pass. Do not explain the failure instead of fixing it, " +
+    "and do not report success until you have run the check yourself and read what it printed."
+  misplacedProject(root) match
+    case Some(dir) =>
+      base + "\n\nNOTE: the check runs in the workspace ROOT, and there is no Cargo.toml there — " +
+      "the project is in `" + dir + "/`. `cargo new " + dir + "` created a subdirectory; the " +
+      "project has to be in the root itself. Move it up or recreate it with `cargo init` in the " +
+      "root, then run the check again."
+    case None => base
+```
