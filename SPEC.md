@@ -256,10 +256,20 @@ judge** — an independent model reading the task and the code. Its *unknown* MU
 NOT count as a pass: a bounded caller can escalate or report an honest unverified
 result, but it may not claim correctness it has no evidence for.
 
-**Divergence, stated:** implemented in the Rust one (`crates/nadia/src/gate.rs`
-over `rozum-agent`'s shared primitives, which `rozum launch` uses too — one
-definition, two consumers). The ScalaScript and Scala 3 ones do not have it yet.
-That is a gap in them, not an option: this section is the contract.
+**Implemented in all three** (2026-08-04). Rust: `crates/nadia/src/gate.rs` over
+`rozum-agent`'s primitives, which `rozum launch` uses too — one definition, two
+consumers. Scala 3: `scala/sdk/Verify.scala` (generic) + `scala/rozum/Gate.scala`
+(policy), the same split with nothing underneath it. ScalaScript:
+`src/gate.ssc` over `std.agent`.
+
+The parts above that say MUST are checked per implementation rather than by
+reading: nine unit tests each in Rust and Scala 3 — deliberately twins, so a
+disagreement between them is a bug in one — and, since the ScalaScript side has
+no test harness in that repository, `src/gate-check.ssc`, a script that runs the
+same rules and exits non-zero when one of them changed.
+
+The three differ only where this spec is silent: how many repair rounds, the
+wording shown to an operator, and which front-ends carry it.
 
 ## 4. Modes
 

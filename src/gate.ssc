@@ -149,7 +149,10 @@ def runCheck(cmd: String, root: String): (Boolean, String) =
 /** The single child directory holding a Cargo.toml when the root holds none. Ambiguity gives
   * None: a hint that names the wrong directory is worse than no hint. */
 def misplacedProject(root: String): Option[String] =
-  if exists(root + "/Cargo.toml") then None
+  // `isDir` first: `listDir` on a missing directory raises, and this runs on the failure path —
+  // where the workspace may be exactly what went wrong (an agent that deleted its own root, see
+  // rozum BUG-017). A diagnostic that throws while diagnosing is worse than no diagnostic.
+  if !isDir(root) || exists(root + "/Cargo.toml") then None
   else
     val kids = listDir(root).filter(name => exists(root + "/" + name + "/Cargo.toml"))
     if kids.length == 1 then Some(kids.head) else None

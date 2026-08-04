@@ -34,6 +34,10 @@ ssc run src/nadia.ssc -- run "…"
 ssc run src/nadia.ssc -- chat
 ```
 
+```bash
+ssc run src/gate-check.ssc      # the gate's contract rules (SPEC §3.1); exit 0 = they hold
+```
+
 Needs the `ssc` toolchain from the scalascript repository. Two conventions bite here and are
 written down where they bit:
 

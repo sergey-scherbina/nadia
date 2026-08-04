@@ -23,6 +23,14 @@ exhausted · `2` gateway failure. `--json` prints the whole run — final text, 
 step count and every tool call with its result — which is what you want when a run
 surprises you.
 
+Every run is gated: before it starts, the model formalizes the task into an acceptance check;
+after it stops, that check decides. A failure comes back as the next turn carrying the command and
+what it actually printed (two rounds by default). The last line says which of four happened —
+`✔ check passed: <command>`, `✘ check FAILED` with the output, a model-judge verdict, or
+`⚠ not checked` when the task had no machine-checkable criterion. A failed check exits 1: success
+is not the model's to declare. `NADIA_VERIFY=0` turns it off, `NADIA_VERIFY_ROUNDS=N` changes the
+budget. Contract: [SPEC.md](../SPEC.md) §3.1.
+
 Useful flags: `--workspace DIR` (act somewhere other than cwd), `--max-steps N`,
 `--allow-net`, `--no-confine`, and `--mcp NAME` to connect an MCP server's tools for this
 run ([tools.md](tools.md#the-seventh-tool-is-not-built-it-is-connected--mcp)).

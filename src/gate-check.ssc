@@ -1,0 +1,77 @@
+---
+name: nadia-gate-check
+version: 0.1.0
+description: Runs the gate's contract rules (SPEC §3.1) and exits non-zero if any of them changed.
+---
+
+# Contract check for `nadia.gate`
+
+The Rust and Scala 3 implementations assert these in their unit-test suites. This side has no
+test harness in this repository (a gap recorded in `BACKLOG.md`, not invented here), so the
+same assertions run as a script:
+
+```bash
+ssc run src/gate-check.ssc          # exit 0 = the contract holds
+```
+
+Only the rules `SPEC.md` §3.1 makes **contract** are checked — the ones where the three
+implementations disagreeing means one of them is a bug. Wording and rounds are policy and
+belong to each front-end.
+
+[unquote, cargoRunFragment, isHallucinatedCargoCheck, misplacedProject, cargoFloor](gate.ssc)
+[exit](std/os.ssc)
+
+```scalascript
+var failures = 0
+
+def check(name: String, ok: Boolean): Unit =
+  if ok then println("  ok   " + name)
+  else
+    println("  FAIL " + name)
+    failures = failures + 1
+
+def eq(name: String, got: String, want: String): Unit =
+  check(name + " (got `" + got + "`, want `" + want + "`)", got == want)
+
+println("nadia.gate — contract check (SPEC §3.1)")
+
+// A delimiting quote is not part of the argument. The measured case: a task writes
+// `cargo run -- "3 4 + 2 *"` and the model returns the argument the way the task spelled it.
+eq("one symmetric pair comes off", unquote("\"3 4 + 2 *\""), "3 4 + 2 *")
+eq("single quotes too", unquote("'y'"), "y")
+eq("an empty expectation survives", unquote("\"\""), "")
+eq("exactly one pair, not all", unquote("'\"x\"'"), "\"x\"")
+// What must NOT be stripped, because there the quote is data.
+eq("plain text untouched", unquote("hello"), "hello")
+eq("unbalanced is data", unquote("\"unbalanced"), "\"unbalanced")
+eq("internal quotes are data", unquote("he said \"hi\""), "he said \"hi\"")
+eq("quotes around parts are data", unquote("\"a\" + \"b\""), "\"a\" + \"b\"")
+
+// The fragment quotes the model's values and SAYS what it saw on a mismatch.
+val frag = cargoRunFragment("\"3 4 + 2 *\"", "\"14\"")
+check("fragment carries the value, not the spelling", frag.contains("'3 4 + 2 *'"))
+check("fragment carries the expectation", frag.contains("'14'"))
+check("fragment prints both on a mismatch", frag.contains("printed") && frag.contains("expected"))
+
+// An invented cargo check is recognized: no manifest, and a task that never asked for Rust.
+check("invented cargo check is dropped",
+      isHallucinatedCargoCheck("cargo run -q -- pong", "/tmp/nadia-gate-check-nonexistent", "reply with pong"))
+check("a task that DOES ask for Rust keeps its check",
+      !isHallucinatedCargoCheck("cargo build -q", "/tmp/nadia-gate-check-nonexistent",
+                                "write a Rust program that prints pong"))
+
+// A workspace with no cargo project has no floor to stand on.
+check("no floor without a manifest", cargoFloor("/tmp/nadia-gate-check-nonexistent").isEmpty)
+
+// A project one level down is NAMED (the repair prompt uses this); ambiguity says nothing.
+check("nothing to report for a directory that does not exist",
+      misplacedProject("/tmp/nadia-gate-check-nonexistent").isEmpty)
+
+println("")
+if failures == 0 then
+  println("contract holds")
+  exit(0)
+else
+  println(failures.toString + " rule(s) changed — SPEC §3.1 and this file disagree, and one of them is a bug")
+  exit(1)
+```

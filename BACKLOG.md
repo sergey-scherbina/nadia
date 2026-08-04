@@ -1,5 +1,15 @@
 # Backlog
 
+## Test harness
+
+- [ ] **ssc-test-harness** — the ScalaScript implementation has no unit tests in this repo, so
+  its share of the contract is checked by `src/gate-check.ssc`, a script that asserts and exits
+  non-zero. That works and it is not a test suite: it covers only the pure rules, nothing runs it
+  automatically, and `tools.ssc` / `nadia.ssc` have no equivalent at all. Noticed while porting the
+  verify gate (2026-08-04); writing the gate's check found a real defect on the first run —
+  `listDir` raises on a missing directory, and `misplacedProject` ran on exactly the failure path
+  where the workspace may be gone.
+
 Ordered by what blocks P0. Items marked **upstream** belong to a sibling repo
 and are filed there; they are listed here because nadia is blocked on them.
 
