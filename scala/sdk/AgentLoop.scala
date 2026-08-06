@@ -39,7 +39,8 @@ object AgentLoop:
     var ops = List.empty[Op]
     var steps = 0
 
-    def finish(text: String, stop: Stop) = Outcome(text, stop, steps, ops.reverse, messages)
+    def finish(text: String, stop: Stop) =
+      Outcome(text, stop, steps, ops.reverse, messages, guard.tripped)
 
     var result: Option[Outcome] = None
     while result.isEmpty do
@@ -97,7 +98,15 @@ final case class Outcome(
     stop: Stop,
     steps: Int,
     operations: List[Op],
-    transcript: List[ujson.Value]
+    transcript: List[ujson.Value],
+    /** Did [[LoopGuard]] refuse a call during this run?
+      *
+      * A caller that intervenes afterwards needs to know: the refusal is the last thing left in
+      * the transcript, and a small model answers the next turn by quoting it. Measured in the Rust
+      * twin (BUG-027): the repair turn made one step, zero tool calls, and its whole reply was the
+      * guard's sentence. Resuming that transcript spends the round before it starts.
+      */
+    loopBroken: Boolean = false
 )
 
 /** Refuses a call that is going in circles.
@@ -117,6 +126,9 @@ final case class Outcome(
   * to say what it had already done.
   */
 final class LoopGuard(window: Int = 12, repeats: Int = 4):
+  /** Whether this guard has refused anything. See [[Outcome.loopBroken]]. */
+  var tripped: Boolean = false
+
   private var history = List.empty[String]
 
   private def key(c: ToolCall) = s"${c.name}:${ujson.write(c.args)}"
@@ -127,7 +139,9 @@ final class LoopGuard(window: Int = 12, repeats: Int = 4):
     // and the output is not.
     val prefix = key(c) + "=>"
     val recent = history.take(window).filter(_.startsWith(prefix))
-    Option.when(recent.length >= repeats - 1 && recent.distinct.length == 1)(
+    val refuse = recent.length >= repeats - 1 && recent.distinct.length == 1
+    if refuse then tripped = true
+    Option.when(refuse)(
       s"You have called `${c.name}` with these exact arguments several times and got the same " +
         "result every time. Repeating it will not help. Re-read the current state of the file " +
         "or the command output, and either take a different approach or stop and report what " +

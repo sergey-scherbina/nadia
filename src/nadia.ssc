@@ -289,7 +289,10 @@ else if mode == "run" then
     var passedCheck = false
     var round = 0
     var repairing = true
-    while repairing && round < gateRounds() do
+    // `gateRounds()` REPAIRS and one check more than that. The old shape stopped one repair short
+    // (with the default of 2 it only ever repaired ONCE), because it decided at the top of the
+    // round instead of after the check.
+    while repairing do
       check match
         case None => repairing = false
         case Some(c) =>
@@ -298,14 +301,20 @@ else if mode == "run" then
             println("nadia: ✔ проверка прошла: " + c)
             passedCheck = true
             repairing = false
-          else if round + 1 >= gateRounds() then
+          else if round >= gateRounds() then
             println("nadia: ✘ проверка НЕ прошла: " + c + "\n" + output)
             failedCheck = true
             repairing = false
           else
-            println("nadia: check failed — repair round " + (round + 1).toString)
-            r = runOnce(sb, endpoint, model, repairPrompt(c, output, sb.root), maxSteps, mcpTools)
             round = round + 1
+            println("nadia: check failed — repair round " + round.toString)
+            // A fresh run per repair, which this implementation has always done and which the Rust
+            // twin had to be taught (BUG-027): a turn cut by the loop guard ends with the guard's
+            // refusal, and a small model answers the next turn by quoting it. What was missing
+            // here is the TASK — a fresh conversation that is handed only the check output has to
+            // guess what it was building.
+            r = runOnce(sb, endpoint, model, task + "\n\n" + repairPrompt(c, output, sb.root),
+                        maxSteps, mcpTools)
     renderOps(r)
     println(r.text)
     // A run whose check FAILED did not finish, whatever the model says about it.

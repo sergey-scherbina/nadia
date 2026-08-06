@@ -35,13 +35,28 @@ object Nadia:
     var gate = Gate.Report()
     var round = 0
     var repairing = true
-    while repairing && round < Gate.rounds do
+    // `Gate.rounds` REPAIRS and one check MORE than that. Checking only before each repair leaves
+    // the last attempt unjudged — measured in the Rust twin, three runs in six then reported a
+    // failed check about code that builds (BUG-027). "The check decides" cannot hold while the
+    // final attempt is never checked.
+    while repairing do
       Gate.check(client, task, sb.root, check, r.stop == Stop.Done) match
+        case (rep, _) if round >= Gate.rounds =>
+          gate = rep.copy(rounds = round)
+          repairing = false
         case (rep, Some(prompt)) =>
           gate = rep.copy(rounds = round)
-          Console.err.println(s"nadia: check failed — repair round ${round + 1}")
-          r = AgentLoop.resume(client, r.transcript :+ Wire.user(prompt), tools, budget)
           round += 1
+          Console.err.println(s"nadia: check failed — repair round $round")
+          // A turn cut by the loop guard ends with the guard's refusal, and a small model answers
+          // the next turn by quoting it. Resuming that transcript spends the round before it
+          // starts, so a repair after a break begins CLEAN: the task and the check output are all
+          // the next attempt needs.
+          r =
+            if r.loopBroken then
+              Console.err.println("nadia: …the last turn was cut for repetition — restarting clean")
+              AgentLoop.run(client, systemPrompt(sb.root.toString), s"$task\n\n$prompt", tools, budget)
+            else AgentLoop.resume(client, r.transcript :+ Wire.user(prompt), tools, budget)
         case (rep, None) =>
           gate = rep.copy(rounds = round)
           repairing = false

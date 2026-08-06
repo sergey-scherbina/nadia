@@ -101,6 +101,18 @@ class AgentLoopSuite extends munit.FunSuite:
   }
 
 class LoopGuardSuite extends munit.FunSuite:
+
+  test("a guard that refused says so, so the caller can start clean"):
+    // The refusal is the last thing left in the transcript, and a small model answers the next
+    // turn by quoting it — measured in the Rust twin (BUG-027): one step, zero tool calls, and the
+    // guard's own sentence as the whole reply. A caller can only avoid that if it is TOLD.
+    val g = LoopGuard()
+    assert(!g.tripped)
+    val call = ToolCall("1", "bash", ujson.Obj("command" -> "cargo build"))
+    for _ <- 1 to 3 do g.record(call, Left("same error"))
+    assert(g.check(call).isDefined, "four identical calls with one result must be refused")
+    assert(g.tripped, "the guard refused and did not say so")
+
   import Fixtures.*
 
   private def repeat(guard: LoopGuard, c: ToolCall, out: Either[String, ujson.Value], times: Int) =

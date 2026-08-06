@@ -265,6 +265,17 @@ Each mistake fails a program that does exactly what was asked, which is the expe
 kind of gate defect: the operator is told correct work is broken, and the model is sent
 to break it.
 
+**`N` repairs means `N + 1` checks.** Checking only before each repair leaves the last attempt
+unjudged, and a run that fixed the fault on its final try then reports a failure it no longer has
+(measured 2026-08-06: three runs in six). A gate whose last word is about a state that no longer
+exists is worse than one that says nothing.
+
+**A repair after a loop-break starts CLEAN.** A turn cut by the repetition guard ends with the
+guard's own refusal, and a small model answers the next turn by quoting it — measured, the repair
+turn made one step, zero tool calls, and its whole reply was that sentence. The next attempt gets
+the task and the check output in a fresh conversation, which is all it needs; what it must not
+inherit is the transcript that just ended in a refusal.
+
 Three rules make it honest rather than theatre:
 
 - **`checkable: false` is a valid answer.** A task with no machine-checkable

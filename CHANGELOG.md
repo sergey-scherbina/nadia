@@ -1,5 +1,22 @@
 # Changelog
 
+## ports-loopbreak — the same two gate defects in the other two implementations
+Completed: 2026-08-06
+
+BUG-027 was found and fixed in the Rust nadia; `SPEC.md` §3.1 is a contract for three. Checked both
+ports against it, and they had split the two defects between them:
+
+- **Scala 3 had both.** Its gate resumed the transcript that ended in the loop guard's refusal, and
+  its loop checked only before each repair, so the last attempt went unjudged. `LoopGuard` now says
+  when it fired (`Outcome.loopBroken`), a repair after a break starts a fresh conversation with the
+  task and the check output, and the loop is `rounds` repairs with `rounds + 1` checks.
+- **ScalaScript was accidentally right about the first** — it has always started a fresh run per
+  repair, which is exactly the fix the Rust one needed — and wrong in its own way about the second:
+  it decided at the top of the round, so with the default of 2 it only ever repaired ONCE, and the
+  fresh conversation was handed the check output without the task it belonged to.
+
+Both rules now live in §3.1, where all three read them.
+
 ## bug026-ports — the rule reaches all three implementations
 Completed: 2026-08-06
 
