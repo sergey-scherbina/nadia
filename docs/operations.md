@@ -161,21 +161,26 @@ REPS=2 scripts/bench/agentic.sh          # in the rozum repo
 No launcher change is needed: `rozum launch` already exports the gateway URL to every agent
 it starts, and nadia reads it.
 
-Last full run (Qwen3.5-4B, 8 tasks × 2 reps, before the verification-prompt fix):
+Last full run (Qwen3.5-4B, 8 tasks × 3 reps, 2026-08-06 — the clean re-run the previous entry
+owed):
 
-| | | |
-|---|---|---|
-| claude | 15/16 | 33 s per passing cell |
-| **nadia** | **14/16** | **30 s** |
-| codex | 9/16 | 102 s |
-| opencode | 2/16 | — |
+| | |
+|---|---|
+| **nadia** | **23/24** — seven tasks 3/3, `wordcount` 2/3 |
 
-Read it as a pass *rate*, not as cells: one cell separates the top two, which is inside the
-noise at two reps. The useful conclusion is not the ranking but the spread — the same model
-scores 15/16 under one harness and 2/16 under another, so on a small local model the harness
-is the dominant variable, not the weights.
+The earlier cross-agent table (claude 15/16, nadia 14/16, codex 9/16, opencode 2/16) still carries
+the useful conclusion, which was never the ranking: the same model scores 15/16 under one harness
+and 2/16 under another, so on a small local model the harness is the dominant variable, not the
+weights.
 
-Two caveats on that run, both since addressed: nadia was cut short by the gateway's
-repetition guard in 11 of its 16 cells while claude was never cut (see
-[safety.md](safety.md#the-repetition-guard)), and the one task it lost, `wordcount`, went to
-4/4 after the verification prompt was fixed. A clean re-run is still owed.
+Two cautions this re-run bought, both about reading a matrix at all:
+
+- **A green cell says nothing about the gate.** The harness runs its OWN verifier, so a cell passes
+  whenever the code ends up correct — however badly the agent's own check behaved. A run that
+  fought a bad check for both repair rounds and got there anyway is a pass in that table. To learn
+  anything about the gate, read its lines (`acceptance check — …`, `✔ / ✘ / ⚠`), not the verdict.
+- **Measure the binary you installed, not the one you built.** These three reps ran a two-day-old
+  `nadia`, because a hand install (`cp … || cargo build …`) succeeded on a stale file. On the
+  binary that carries the current gate, `wordcount` is 7/7 with the derived check `cargo build -q`
+  — against 3/5 with the invented `a 3 / c 2 / d 2` the old one produced. Install with
+  `rozum:scripts/install-bins.sh`, which builds first and prints what it replaced.
