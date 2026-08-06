@@ -9,6 +9,19 @@ class VerifySuite extends munit.FunSuite:
 
   private def tmp(): Path = Files.createTempDirectory("verify")
 
+  test("an expectation the task never states is not checked"):
+    // The measured case: `wordcount` says what the program must DO and never what it prints — the
+    // answer lives in a data file — and the model answered with three lines that appear nowhere.
+    // A correct program fails that check forever. Twin of the Rust assertion.
+    val wordcount = "create a Rust binary that reads a text file, counts words case-insensitively " +
+      "and prints the top 3 as `word count`. Verify with `cargo run -- input.txt`."
+    assert(!Verify.taskStates(wordcount, "a 3\nc 2\nd 2"))
+    val reverse = "fix the bug: `cargo run -- hello` must print exactly `olleh`"
+    assert(Verify.taskStates(reverse, "olleh"))
+    assert(Verify.taskStates(reverse, " OLLEH "))
+    assert(!Verify.taskStates(reverse, "hello world"))
+    assert(!Verify.taskStates(reverse, ""))
+
   test("arity comes from the task, not from the model"):
     // Both directions, both measured end-to-end on 2026-08-04 with the same 4B model: asked for
     // one string it merged two arguments, asked for a list it split a quoted one into five. The
@@ -129,7 +142,10 @@ class VerifySuite extends munit.FunSuite:
     val derived = Verify
       .deriveCheck(
         scripted("""here you go: {"checkable": true, "cargo_test": true, "run": [{"arg": "\"3 4 + 2 *\"", "expect": "14"}]}"""),
-        "rpn calculator"
+        // The task has to STATE what it expects, or the expectation is the model's invention and
+        // is dropped (see "an expectation the task never states"). A stub task text used to pass
+        // here, which is exactly the hole that fix closed.
+        """rpn calculator: `cargo run -- "3 4 + 2 *"` must print 14"""
       )
       .getOrElse(fail("a checkable task must yield a command"))
     assert(derived.startsWith("cargo build -q"), derived)
@@ -138,4 +154,4 @@ class VerifySuite extends munit.FunSuite:
     // A model that cannot be reached has no opinion — it does not fabricate one.
     val dead = new ModelClient:
       def chat(m: List[ujson.Value], t: List[Tool], s: Sampling): Either[String, Turn] = Left("boom")
-    assertEquals(Verify.deriveCheck(dead, "rpn calculator"), None)
+    assertEquals(Verify.deriveCheck(dead, """rpn calculator: `cargo run -- "3 4 + 2 *"` must print 14"""), None)

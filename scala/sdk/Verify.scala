@@ -102,6 +102,26 @@ object Verify:
     if has || cur.nonEmpty then out += cur.toString
     out.toList
 
+  /** Does the task actually STATE this expected output?
+    *
+    * A task can say what a program must do without saying what it prints — `wordcount` reads a
+    * data file and prints the top three words, and the answer is in the file, not in the task.
+    * Asked to formalize that, the model invents an expectation: measured 2026-08-05 it produced
+    * `a 3 / c 2 / d 2`, three lines that appear nowhere, and the derived check then demanded them.
+    * **No correct program can pass that**, and both repair rounds went into fighting the check
+    * instead of the compile errors in the way — 0/4 before the guard, 3/3 after.
+    *
+    * `checkable: false` is what the prompt asks for here and what the model does not always give,
+    * so the guard is deterministic, exactly like [[taskArgvFor]]: the task is the source of truth
+    * and the model may only point at it. Whitespace- and case-insensitive, because a task writes
+    * ``prints `olleh` `` and a model may answer `olleh\n`.
+    */
+  def taskStates(task: String, expect: String): Boolean =
+    def squeeze(s: String) = s.split("\\s+").filter(_.nonEmpty).mkString(" ").toLowerCase
+    val e = squeeze(expect)
+    // An empty expectation ("prints nothing") is real and cannot be looked up — not this route.
+    e.nonEmpty && squeeze(task).contains(e)
+
   /** The arity of an example, taken from the TASK rather than from the model.
     *
     * The model is good at "what should this print" and bad at shell lexing — and lexing is the one
@@ -202,6 +222,8 @@ object Verify:
           for
             e <- r.obj.get("expect").flatMap(_.strOpt)
             if argv.nonEmpty
+            // An expectation the task never states is the model inventing the answer.
+            if taskStates(task, e)
           yield
             // Arity comes from the task's own punctuation when the task states the example.
             val joined = argv.map(unquote).mkString(" ")

@@ -1,5 +1,19 @@
 # Changelog
 
+## bug026-ports — the rule reaches all three implementations
+Completed: 2026-08-06
+
+Yesterday's fix (an `expect` the task never states is not a criterion) landed in the Rust nadia and
+`rozum launch`, which share `rozum-agent::verify`, and nowhere else. The Scala 3 and ScalaScript
+nadias derive their own checks from the same schema and would still have demanded an invented
+answer. `SPEC.md` §3.1 is a contract for three implementations, and a contract kept in one of them
+is not a contract.
+
+`taskStates` now exists in all three, with the same tests. Scala 3's own suite caught the hole in
+its scripted-derivation test: it had been passing a STUB task text ("rpn calculator") whose
+expectation appeared nowhere in it — exactly the shape the rule forbids — so the test was fixed to
+state what it expects, which is what a real task does.
+
 ## gate-e2e — the two ported gates meet a model, and two defects meet the light
 Completed: 2026-08-04
 

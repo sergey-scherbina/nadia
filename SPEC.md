@@ -245,6 +245,16 @@ itself, and the run is judged against it:
    can act on. Bounded (default 2 rounds); a model that has not converged in two
    is not converging.
 
+**The expectation belongs to the task too.** An implementation MUST NOT check a `expect` the task
+does not state. A task can say what a program must DO without saying what it prints — read a file
+and print the top three words, where the answer lives in the data — and a model asked to formalize
+that will invent one: measured 2026-08-05, `a 3 / c 2 / d 2`, three lines appearing nowhere, which
+the check then demanded. **No correct program can pass such a check**, and the repair rounds go
+into fighting it instead of the real errors (0/4 before the guard, 3/3 after). `checkable: false`
+is the right answer there and the prompt asks for it; the guard is what makes it not depend on the
+model giving it. Where the expectation is dropped, the check falls back to what CAN be established
+(the build, and the tests if the task asked for them).
+
 **Arity belongs to the task, not to the model.** Where the task states an example,
 the argument list is read from the task's own punctuation — `cargo run -- 3 4` is two
 arguments and `cargo run -- "3 4 + 2 *"` is one — by lexing what follows `cargo run --`

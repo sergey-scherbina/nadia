@@ -18,7 +18,7 @@ Only the rules `SPEC.md` §3.1 makes **contract** are checked — the ones where
 implementations disagreeing means one of them is a bug. Wording and rounds are policy and
 belong to each front-end.
 
-[unquote, cargoRunFragment, cargoRunFragmentArgs, shellLex, taskArgvFor, isHallucinatedCargoCheck, misplacedProject, cargoFloor, runCheck](gate.ssc)
+[unquote, cargoRunFragment, cargoRunFragmentArgs, shellLex, taskArgvFor, taskStates, isHallucinatedCargoCheck, misplacedProject, cargoFloor, runCheck](gate.ssc)
 [exit](std/os.ssc)
 
 ```scalascript
@@ -70,6 +70,16 @@ eq("the task's two arguments win", taskArgvFor(twoTask, "3 4").getOrElse(List())
 eq("the task's ONE quoted argument wins", taskArgvFor(oneTask, "3 4 + 2 *").getOrElse(List()).mkString("|"), "3 4 + 2 *")
 check("a value the task never states is left alone", taskArgvFor(twoTask, "5 6").isEmpty)
 eq("the lexer groups what the quotes group", shellLex("\"3 4 + 2 *\" must print 14").mkString("|"), "3 4 + 2 *|must|print|14")
+
+// An expectation the task never states is the model inventing the answer — measured 2026-08-05
+// on `wordcount`, where the derived check demanded three lines that appear nowhere and no correct
+// program could pass it (0/4 before the guard, 3/3 after).
+val wcTask = "read a text file, count words case-insensitively and print the top 3 as `word count`"
+check("an invented expectation is not a criterion", !taskStates(wcTask, "a 3 c 2 d 2"))
+val revTask = "fix the bug: `cargo run -- hello` must print exactly `olleh`"
+check("what the task DOES state is checked", taskStates(revTask, "olleh"))
+check("case and spacing do not matter", taskStates(revTask, "  OLLEH "))
+check("an empty expectation is not looked up", !taskStates(revTask, ""))
 
 // An invented cargo check is recognized: no manifest, and a task that never asked for Rust.
 check("invented cargo check is dropped",

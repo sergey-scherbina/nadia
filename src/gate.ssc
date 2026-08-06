@@ -116,6 +116,20 @@ def shellLex(s: String): List[String] =
   if has || cur != "" then out = out :+ cur
   out
 
+/** Does the task actually STATE this expected output?
+  *
+  * A task can say what a program must do without saying what it prints — `wordcount` reads a data
+  * file and prints the top three words, and the answer is in the file, not in the task. Asked to
+  * formalize that, the model invents one: measured 2026-08-05 it answered `a 3 / c 2 / d 2`, three
+  * lines that appear nowhere, and the check then demanded them. No correct program can pass that
+  * (0/4 before the guard, 3/3 after). The task is the source of truth; the model may point at it. */
+def taskStates(task: String, expect: String): Boolean =
+  def squeeze(x: String): String =
+    x.split(" ").flatMap(w => w.split("\n")).filter(w => w != "").mkString(" ").toLowerCase
+  val e = squeeze(expect)
+  // An empty expectation ("prints nothing") is real and cannot be looked up — not by this route.
+  e != "" && squeeze(task).contains(e)
+
 /** The arity of an example, taken from the TASK rather than from the model. The model is good at
   * "what should this print" and bad at shell lexing — and lexing is the one part we can do
   * exactly, because the task wrote the list with its quotes. Measured 2026-08-04 in BOTH
@@ -195,7 +209,9 @@ def deriveCheck(endpoint: AgentEndpoint, model: String, task: String): Option[St
         val argv = if listed.nonEmpty then listed
                    else if r.get("arg").asString != "" then List(r.get("arg").asString)
                    else List()
-        if argv.isEmpty then ""
+        val exp = r.get("expect").asString
+        // An expectation the task never states is the model inventing the answer.
+        if argv.isEmpty || !taskStates(task, exp) then ""
         else
           // Arity comes from the task's own punctuation when the task states the example.
           val joined = argv.map(x => unquote(x)).mkString(" ")
