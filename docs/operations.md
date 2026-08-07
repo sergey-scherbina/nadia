@@ -161,12 +161,11 @@ REPS=2 scripts/bench/agentic.sh          # in the rozum repo
 No launcher change is needed: `rozum launch` already exports the gateway URL to every agent
 it starts, and nadia reads it.
 
-Last full run (Qwen3.5-4B, 8 tasks × 3 reps, 2026-08-06 — the clean re-run the previous entry
-owed):
+Last full run (Qwen3.5-4B, 8 tasks × 3 reps, 2026-08-06 evening — every gate fix in place):
 
 | | |
 |---|---|
-| **nadia** | **23/24** — seven tasks 3/3, `wordcount` 2/3 |
+| **nadia** | **24/24** — every task 3/3, and **zero repair rounds in all 24 cells** |
 
 The earlier cross-agent table (claude 15/16, nadia 14/16, codex 9/16, opencode 2/16) still carries
 the useful conclusion, which was never the ranking: the same model scores 15/16 under one harness
