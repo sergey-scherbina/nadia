@@ -107,7 +107,10 @@ def shellLex(s: String): List[String] =
     else if ch == "\"" || ch == "'" then
       quote = ch
       has = true
-    else if ch == " " || ch == "\t" then
+    // A task is MARKDOWN: backticks fence the example, they are not part of an argument. Measured
+    // 2026-08-13 by the contract corpus on the matrix's own rpn prompt. Twin of the Rust and Scala
+    // arms; the corpus is what keeps the three honest.
+    else if ch == " " || ch == "\t" || ch == "`" then
       if has || cur != "" then
         out = out :+ cur
         cur = ""

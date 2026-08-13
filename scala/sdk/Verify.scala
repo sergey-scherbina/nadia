@@ -95,7 +95,11 @@ object Verify:
         case Some(_)           => cur += c
         case None if c == '"' || c == '\'' =>
           quote = Some(c); has = true
-        case None if c.isWhitespace =>
+        // A task is MARKDOWN: its backticks fence the example rather than belong to it. Measured
+        // 2026-08-13 by the contract corpus on the matrix's own rpn prompt — the trailing backtick
+        // stuck to the last argument, matched nothing, and left the arity rule inactive on exactly
+        // the task it was written for. Twin of the Rust and ScalaScript arms.
+        case None if c == '`' || c.isWhitespace =>
           if has || cur.nonEmpty then
             out += cur.toString; cur.clear(); has = false
         case None => cur += c

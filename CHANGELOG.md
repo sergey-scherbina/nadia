@@ -1,5 +1,26 @@
 # Changelog
 
+## contract-corpus — one contract, read three times instead of ported by hand
+2026-08-13
+
+`SPEC.md` §3.1 calls the verify gate one contract in three implementations, and it was kept that way
+by discipline: hand-written twin tests in Rust and Scala, a hand-written script for ScalaScript, and
+every fix ported by hand — which is how BUG-026 landed in Rust alone and needed two further passes.
+
+`contract/gate-cases.json` holds the pure rules as data — the lexer, the expectation guard, the
+arity rule — each case carrying the measurement that put it there. All three legs read it: a munit
+suite in Scala, `src/gate-check.ssc` for ScalaScript, and a test in `rozum-agent` that skips loudly
+when the sibling repo is not checked out (rozum's CI has no nadia; nadia's is where the absence
+fails).
+
+**It earned itself on the first run.** A case written from the spec's own wording —
+`` `cargo run -- "3 4 + 5 *"` `` — failed in every implementation: a task is markdown, its trailing
+backtick stuck to the last argument, the arity rule matched nothing, and the guard written for
+exactly the matrix's rpn prompt was silently inactive, leaving the model's own (wrong) list to
+stand. Three hand-written suites had all agreed that was fine, because all three tested the rule
+with the backticks removed. The rule is in the spec now and in all three lexers.
+
+
 ## ports-loopbreak — the same two gate defects in the other two implementations
 Completed: 2026-08-06
 

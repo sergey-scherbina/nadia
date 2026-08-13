@@ -2,13 +2,14 @@
 
 ## Test harness
 
-- [ ] **ssc-test-harness** — the ScalaScript implementation has no unit tests in this repo, so
-  its share of the contract is checked by `src/gate-check.ssc`, a script that asserts and exits
-  non-zero. That works and it is not a test suite: it covers only the pure rules, nothing runs it
-  automatically, and `tools.ssc` / `nadia.ssc` have no equivalent at all. Noticed while porting the
-  verify gate (2026-08-04); writing the gate's check found a real defect on the first run —
-  `listDir` raises on a missing directory, and `misplacedProject` ran on exactly the failure path
-  where the workspace may be gone.
+- [x] **ssc-test-harness — SUPERSEDED 2026-08-13 and partly stale when written.** The entry said the
+  ScalaScript side had no checks and that `tools.ssc` / `nadia.ssc` had "no equivalent at all";
+  `src/tools-check.ssc` and `src/fsx-check.ssc` exist and pass. What was true — that three
+  hand-written suites kept one contract in step by discipline — is now answered by
+  `contract/gate-cases.json`: the pure rules as data, read by all three implementations. It earned
+  itself on the first run by finding a hole three hand-written suites had agreed was fine (a task's
+  markdown backtick stuck to the last argument, so the arity rule never fired on the matrix's own
+  rpn prompt).
 
 Ordered by what blocks P0. Items marked **upstream** belong to a sibling repo
 and are filed there; they are listed here because nadia is blocked on them.

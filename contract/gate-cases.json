@@ -1,0 +1,142 @@
+{
+  "_": [
+    "The verify gate's pure rules, as DATA — one file, three runners (SPEC.md §3.1).",
+    "",
+    "Why this exists: the three implementations agreed by DISCIPLINE. Each MUST in the spec had",
+    "hand-written twin tests in Rust and Scala and a hand-written script for ScalaScript, and every",
+    "fix was ported by hand — BUG-026 landed in Rust alone and needed a second and third pass, which",
+    "is how a contract kept in three places stops being one contract.",
+    "",
+    "Every case carries `why`: the measurement that put it here. A case with no incident behind it is",
+    "a case somebody guessed."
+  ],
+  "shell_lex": [
+    {
+      "in": "3 4",
+      "out": [
+        "3",
+        "4"
+      ],
+      "why": "BUG-018 (2026-08-04): asked for one string, the model merged `cargo run -- 3 4` into a single argument and failed a correct program."
+    },
+    {
+      "in": "\"3 4 + 2 *\"",
+      "out": [
+        "3 4 + 2 *"
+      ],
+      "why": "The same afternoon, the other direction: one quoted argument split into five."
+    },
+    {
+      "in": "'x y' z",
+      "out": [
+        "x y",
+        "z"
+      ],
+      "why": "Single quotes group too; a task may use either."
+    },
+    {
+      "in": "  a   b  ",
+      "out": [
+        "a",
+        "b"
+      ],
+      "why": "Runs of whitespace are one separator, and the edges are not empty arguments."
+    },
+    {
+      "in": "\"\"",
+      "out": [
+        ""
+      ],
+      "why": "An explicitly empty argument is an argument — the quotes are what say so."
+    },
+    {
+      "in": "",
+      "out": [],
+      "why": "Nothing lexes to nothing, not to one empty word."
+    },
+    {
+      "in": "`cargo run -- \"3 4 + 5 *\"` must print 35",
+      "out": [
+        "cargo",
+        "run",
+        "--",
+        "3 4 + 5 *",
+        "must",
+        "print",
+        "35"
+      ],
+      "why": "A task is markdown. Measured 2026-08-13 on the matrix's own rpn prompt: the trailing backtick stuck to the last argument, the arity rule matched nothing, and the guard written for exactly this task was silently inactive."
+    }
+  ],
+  "task_states": [
+    {
+      "task": "write a program that prints olleh",
+      "expect": "olleh",
+      "out": true,
+      "why": "The ordinary case: the task says what it must print, so the check may demand it."
+    },
+    {
+      "task": "read words.txt and print the top three words by count",
+      "expect": "a 3\nc 2\nd 2",
+      "out": false,
+      "why": "BUG-026 (2026-08-05): three lines appearing nowhere in the task, invented by the model and then demanded by the check. No correct program can pass it — 0/4 before the guard, 3/3 after."
+    },
+    {
+      "task": "print   olleh",
+      "expect": "olleh\n",
+      "out": true,
+      "why": "Whitespace-insensitive on purpose: a task writes `prints olleh` and a model answers `olleh\\n`."
+    },
+    {
+      "task": "print OLLEH",
+      "expect": "olleh",
+      "out": true,
+      "why": "Case-insensitive for the same reason — the model reflows what the task wrote."
+    },
+    {
+      "task": "make the error message clearer",
+      "expect": "",
+      "out": false,
+      "why": "An empty expectation cannot be looked up in the task. `checkable: false` is the right answer there, and the guard must not turn emptiness into agreement."
+    }
+  ],
+  "task_argv_for": [
+    {
+      "task": "Verify BOTH: `cargo run -- \"3 4 + 5 *\"` must print 35, and `cargo run -- \"5 1 2 + 4 * + 3 -\"` must print 14.",
+      "joined": "3 4 + 5 *",
+      "out": [
+        "3 4 + 5 *"
+      ],
+      "why": "The matrix's rpn task, verbatim. This is the case the arity rule exists for, and it did not fire until the backtick rule landed."
+    },
+    {
+      "task": "build an rpn calculator. `cargo run -- \"3 4 + 2 *\"` must print 14",
+      "joined": "3 4 + 2 *",
+      "out": [
+        "3 4 + 2 *"
+      ],
+      "why": "The quotes in the TASK are the arity. The prose after the example never enters."
+    },
+    {
+      "task": "add two numbers: cargo run -- 3 4 prints 7",
+      "joined": "3 4",
+      "out": [
+        "3",
+        "4"
+      ],
+      "why": "The same rule in the other direction — two words, two arguments."
+    },
+    {
+      "task": "write a program that prints olleh",
+      "joined": "olleh",
+      "out": null,
+      "why": "No `cargo run --` example in the task, so there is no arity to take from it and the model's own list stands. Null is a real answer, not a failure."
+    },
+    {
+      "task": "run it as `cargo run -- 3 4` and it prints 7",
+      "joined": "",
+      "out": null,
+      "why": "Nothing to match: an empty value cannot select a prefix, and guessing one would invent an argument list."
+    }
+  ]
+}

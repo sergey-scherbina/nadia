@@ -20,6 +20,8 @@ belong to each front-end.
 
 [unquote, cargoRunFragment, cargoRunFragmentArgs, shellLex, taskArgvFor, taskStates, isHallucinatedCargoCheck, misplacedProject, cargoFloor, runCheck](gate.ssc)
 [exit](std/os.ssc)
+[readFile, exists](std/fs.ssc)
+[jsonRead](std/json.ssc)
 
 ```scalascript
 var failures = 0
@@ -102,6 +104,33 @@ check("a passing command reads as passed", okTrue)
 val (okFalse, out) = runCheck("echo hello; exit 1", "/tmp")
 check("a failing command reads as failed", !okFalse)
 check("and the repair round gets what it printed", out.contains("hello"))
+
+// ── The shared corpus ────────────────────────────────────────────────────────────────────────
+// `contract/gate-cases.json` is read by all three implementations (SPEC §3.1). The assertions above
+// are this file's own; these are the ones every leg answers, so a rule added once is checked three
+// times. The file is found relative to the repository root, which is where `ssc run` is invoked.
+val corpusPath = "contract/gate-cases.json"
+if !exists(corpusPath) then
+  println("")
+  println("MISSING " + corpusPath + " — the corpus IS the contract; run this from the repo root")
+  exit(1)
+
+val corpus = jsonRead(readFile(corpusPath))
+
+for c <- corpus.get("shell_lex").asList do
+  val got = shellLex(c.get("in").asString)
+  val want = c.get("out").asList.map(v => v.asString).toList
+  check("corpus shell_lex: " + c.get("why").asString, got == want)
+
+for c <- corpus.get("task_states").asList do
+  val got = taskStates(c.get("task").asString, c.get("expect").asString)
+  check("corpus task_states: " + c.get("why").asString, got == c.get("out").asBool)
+
+for c <- corpus.get("task_argv_for").asList do
+  val got = taskArgvFor(c.get("task").asString, c.get("joined").asString)
+  val out = c.get("out")
+  val want = if out.isNull then None else Some(out.asList.map(v => v.asString).toList)
+  check("corpus task_argv_for: " + c.get("why").asString, got == want)
 
 println("")
 if failures == 0 then

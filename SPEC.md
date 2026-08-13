@@ -255,6 +255,13 @@ is the right answer there and the prompt asks for it; the guard is what makes it
 model giving it. Where the expectation is dropped, the check falls back to what CAN be established
 (the build, and the tests if the task asked for them).
 
+**A task is markdown; its backticks are not arguments.** A task writes its example as
+`` `cargo run -- "3 4 + 5 *"` `` — the fenced form every prompt in the matrix uses — and a shell lexer
+reading that prose keeps the trailing backtick, producing `*\`` as the last argument, matching
+nothing, and silently falling back to the model's own list. Measured 2026-08-13 by the contract
+corpus on its first run: the arity rule below was inactive on the very task it was written for. A
+backtick in a task separates words; it never belongs to one.
+
 **Arity belongs to the task, not to the model.** Where the task states an example,
 the argument list is read from the task's own punctuation — `cargo run -- 3 4` is two
 arguments and `cargo run -- "3 4 + 2 *"` is one — by lexing what follows `cargo run --`
@@ -301,11 +308,16 @@ consumers. Scala 3: `scala/sdk/Verify.scala` (generic) + `scala/rozum/Gate.scala
 (policy), the same split with nothing underneath it. ScalaScript:
 `src/gate.ssc` over `std.agent`.
 
-The parts above that say MUST are checked per implementation rather than by
-reading: nine unit tests each in Rust and Scala 3 — deliberately twins, so a
-disagreement between them is a bug in one — and, since the ScalaScript side has
-no test harness in that repository, `src/gate-check.ssc`, a script that runs the
-same rules and exits non-zero when one of them changed.
+The parts above that say MUST are checked from ONE corpus, `contract/gate-cases.json`, read by all
+three implementations: the pure rules as data — the lexer, the expectation guard, the arity rule —
+each case carrying the measurement that put it there. Hand-written twins came first and were kept in
+step by hand, one port at a time, which is how BUG-026 landed in Rust alone and needed two more
+passes; a rule added to the corpus is now checked three times or it fails. The corpus earned itself
+on its first run by finding the backtick hole above, which three hand-written suites had all agreed
+was fine.
+
+The per-implementation suites remain for what is not pure — Rust and Scala 3 unit tests, and
+`src/gate-check.ssc` for the ScalaScript side, which has no harness in that repository.
 
 The three differ only where this spec is silent: how many repair rounds, the
 wording shown to an operator, and which front-ends carry it.

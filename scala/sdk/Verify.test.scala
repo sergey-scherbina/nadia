@@ -155,3 +155,41 @@ class VerifySuite extends munit.FunSuite:
     val dead = new ModelClient:
       def chat(m: List[ujson.Value], t: List[Tool], s: Sampling): Either[String, Turn] = Left("boom")
     assertEquals(Verify.deriveCheck(dead, """rpn calculator: `cargo run -- "3 4 + 2 *"` must print 14"""), None)
+
+/** The same rules, read from `contract/gate-cases.json` instead of retyped here.
+  *
+  * The suite above is hand-written, and its header says every assertion has a twin in Rust "where
+  * they disagree, one of them is a bug" — which was true and was maintained by hand, one port at a
+  * time. This class reads the corpus all three implementations read, so a rule added once is
+  * checked three times and a leg that drifts fails instead of quietly disagreeing (SPEC.md §3.1).
+  */
+class ContractCorpusSuite extends munit.FunSuite:
+  import upickle.default.*
+
+  private def corpus: ujson.Value =
+    // From the repository root, whichever directory the runner started in.
+    val here = Path.of(".").toAbsolutePath
+    val candidates = LazyList
+      .iterate(here)(_.getParent)
+      .takeWhile(_ != null)
+      .map(_.resolve("contract/gate-cases.json"))
+    candidates.find(Files.exists(_)) match
+      case Some(p) => ujson.read(Files.readString(p))
+      case None    => fail("contract/gate-cases.json not found — the corpus IS the contract")
+
+  private def strs(v: ujson.Value): List[String] = v.arr.map(_.str).toList
+
+  test("shell_lex — the corpus"):
+    for c <- corpus("shell_lex").arr do
+      assertEquals(Verify.shellLex(c("in").str), strs(c("out")), c("why").str)
+
+  test("task_states — the corpus"):
+    for c <- corpus("task_states").arr do
+      assertEquals(Verify.taskStates(c("task").str, c("expect").str), c("out").bool, c("why").str)
+
+  test("task_argv_for — the corpus"):
+    for c <- corpus("task_argv_for").arr do
+      val want = c("out") match
+        case ujson.Null => None
+        case v          => Some(strs(v))
+      assertEquals(Verify.taskArgvFor(c("task").str, c("joined").str), want, c("why").str)
