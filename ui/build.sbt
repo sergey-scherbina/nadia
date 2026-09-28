@@ -23,4 +23,6 @@ lazy val ui = (project in file("."))
     run / connectInput := true,
     outputStrategy := Some(StdoutOutput),
     Test / fork := true,
+    // the forked JVMs print the tree's glyphs (▶ ↻ ✎ …) — UTF-8 whatever the container's locale
+    javaOptions ++= Seq("-Dstdout.encoding=UTF-8", "-Dfile.encoding=UTF-8"),
   )

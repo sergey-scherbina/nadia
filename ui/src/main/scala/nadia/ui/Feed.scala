@@ -5,18 +5,18 @@ import okay.codec.Json.*
 
 /**
  * Where the WORLD comes from. The workspace program never talks to a daemon:
- * it asks a Feed for the world and hands it a message to post, and the Feed is
- * the daemons (`Rozum`) or a fixture (`Fixture`) — the same program either way,
+ * it asks a WorldFeed for the world and hands it a message to post, and the WorldFeed is
+ * the daemons (`Rozum`) or a fixture (`InMemory`) — the same program either way,
  * which is how the tests run with no network.
  */
-trait Feed:
+trait WorldFeed:
   /** the world as of now; `focus` names the item whose transcript must be fresh */
   def world(focus: Option[String]): World
   /** post into a room; the error is a string a notice can show */
   def post(room: Room, content: String): Either[String, Unit]
 
 /** an in-memory world: three projects, a few messages, posting appends */
-final class Fixture extends Feed:
+final class InMemory extends WorldFeed:
   private val rooms = Vector(
     Room("rozum", "rozum", "2026-09-28", mentions = 1),
     Room("nadia", "nadia", "2026-09-28"),
@@ -48,7 +48,7 @@ final class Fixture extends Feed:
  * The token is the operator's (`rozum meetings token issue`), sent as Bearer —
  * what the generated terminal client sends too.
  */
-final class Rozum(base: String, token: String, window: Int = 200) extends Feed:
+final class Rozum(base: String, token: String, window: Int = 200) extends WorldFeed:
   import java.net.http.{HttpClient, HttpRequest, HttpResponse}
   import java.net.URI
   private val http = HttpClient.newHttpClient()

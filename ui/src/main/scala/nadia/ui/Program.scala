@@ -15,16 +15,13 @@ import okay.ui.Ui.*
  * not a branch in the logic — `update` never sees it, and the tests prove the
  * same events reach the same state under every layout and every host.
  */
-enum Layout:
+enum Layout(val window: Int):
   /** sidebar · item · agents, `window` messages of transcript */
-  case Wide(window: Int = 20)
+  case Wide(w: Int = 20) extends Layout(w)
   /** one screen at a time — the room list, or one item — `window` messages */
-  case Narrow(window: Int = 6)
-  def window: Int = this match
-    case Wide(w) => w
-    case Narrow(w) => w
+  case Narrow(w: Int = 6) extends Layout(w)
 
-object Workspace:
+object Program:
 
   private val bold = Style(bold = true)
   private val muted = Style(tone = Tone.Muted)
@@ -43,7 +40,7 @@ object Workspace:
         Text(s.notice, muted),
         rooms(s),
         Text("Agents", emphasis),
-        Items(s.world.agents.map(a => Button(s"${a.display} · ${a.state}", a.key)), "agents"),
+        Items(s.world.agents.map(a => Button(s"${a.display} · ${a.state} · ${a.project}", a.key)), "agents"),
         Button("↻", "refresh")))
       case Some(_) => Column(Vector(page(s, layout.window), Button("← rooms", "rooms")))
 
@@ -66,11 +63,12 @@ object Workspace:
   private def agents(s: Workspace): Ui =
     Column(Vector(
       Text("Agents", emphasis),
-      Table(Vector("who", "state", "project"),
-        s.world.agents.map(a => Vector(
-          Button(a.display, a.key, if s.focus.contains(a.key) then Role.Active else Role.Plain),
-          Text(a.state, muted), Text(a.project))),
-        "agents")))
+      Items(s.world.agents.map { a =>
+        val here = s.focus.contains(a.key)
+        Column(Vector(
+          Button(s"${if here then "▶ " else ""}${a.display}", a.key, if here then Role.Active else Role.Plain),
+          Text(s"${a.state} · ${a.project}", muted)))
+      }, "agents")))
 
   /** the focused item — a room's transcript, or an agent's card — and the composer under it */
   private def page(s: Workspace, window: Int): Ui = s.focus match
@@ -93,9 +91,11 @@ object Workspace:
       Column(Vector(
         head,
         Scroll(Column(lines), "transcript"),
+        // a paging button is on the tree only when it can do something: the
+        // tree is the capability list, so an absent button is a refused press
         Row(Vector(
-          Button(if older then "↑ older" else "·", "older"),
-          Button(if newer then "↓ newer" else "·", "newer"))),
+          if older then Button("↑ older", "older") else Text(""),
+          if newer then Button("↓ newer", "newer") else Text(""))),
         Form(Vector(Input(ctx.draft, "compose",
           if ctx.addressee.isEmpty then "Message" else s"To ${ctx.addressee}",
           InputKind.Multiline, live = true)), "Send", "send")))
@@ -112,7 +112,7 @@ object Workspace:
    * `refresh` pulls it, `send` pushes through it — the two places the pure
    * fold meets the daemons, both named, both replaceable by a fixture.
    */
-  def update(feed: Feed)(s: Workspace, e: Event): Workspace = e match
+  def update(feed: WorldFeed)(s: Workspace, e: Event): Workspace = e match
     case Event.Pressed("refresh") => refreshed(feed, s)
     case Event.Pressed("rooms") => s.copy(focus = None)
     case Event.Pressed("quit") => s.copy(quit = true)
@@ -143,7 +143,7 @@ object Workspace:
    * terminal page the same way and their anchors mean the same thing */
   private def window(s: Workspace): Int = 20
 
-  private def refreshed(feed: Feed, s: Workspace): Workspace =
+  private def refreshed(feed: WorldFeed, s: Workspace): Workspace =
     val w = feed.world(s.focus)
     // the reader is looking at the tail of the focused room: what arrives while
     // they look is seen, not unread
@@ -153,7 +153,7 @@ object Workspace:
       s2.withContext(s2.focus.get)(c => c.copy(seen = math.max(c.seen, last)))
     }
 
-  private def focusOn(feed: Feed, s: Workspace, k: String): Workspace =
+  private def focusOn(feed: WorldFeed, s: Workspace, k: String): Workspace =
     val s1 = s.copy(focus = Some(k), notice = "")
     val s2 = s1.copy(world = feed.world(Some(k)))
     val addressee = s2.world.agent(k).map(_.display).getOrElse("")
@@ -162,7 +162,7 @@ object Workspace:
       s2.withContext(k)(c => c.copy(seen = if c.anchor < 0 then math.max(c.seen, last) else c.seen, addressee = addressee))
     }
 
-  private def sent(feed: Feed, s: Workspace): Workspace = s.focus.fold(s) { k =>
+  private def sent(feed: WorldFeed, s: Workspace): Workspace = s.focus.fold(s) { k =>
     val ctx = s.context(k)
     val text = ctx.draft.trim
     if text.isEmpty then s.copy(notice = "nothing to send")

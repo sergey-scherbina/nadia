@@ -12,9 +12,9 @@ import Telegram.{Act, Key, Message, Update}
 class WorkspaceTest extends munit.FunSuite:
   override val munitTimeout = scala.concurrent.duration.Duration(20, "s")
 
-  def fresh: (Fixture, Workspace) =
-    val f = Fixture()
-    (f, Workspace.update(f)(Workspace(), Event.Pressed("refresh")))
+  def fresh: (InMemory, Workspace) =
+    val f = InMemory()
+    (f, Program.update(f)(Workspace(), Event.Pressed("refresh")))
 
   val rozum = "room.rozum.rozum"; val nadia = "room.nadia.nadia"
 
@@ -45,7 +45,7 @@ class WorkspaceTest extends munit.FunSuite:
     val host = new Host:
       def render(ui: Ui): Unit ! Async = async { frames += ui; () }
       def events: Source[Event] = Writer.of(feed)
-    val fiber = Async.spawn(Ui.run(init)(Workspace.view(Layout.Wide()))(Workspace.update(f))(host))
+    val fiber = Async.spawn(Ui.run(init)(Program.view(Layout.Wide()))(Program.update(f))(host))
     Seq(Event.Pressed(rozum), Event.Closed).foreach(feed.offer)
     val end = fiber.join()
     assertEquals(end.focus, Some(rozum))
@@ -59,15 +59,15 @@ class WorkspaceTest extends munit.FunSuite:
 
   test("S2 — switching keeps the draft and the reading position, per item, on the same update") {
     val (f, init) = fresh
-    val step = Workspace.update(f)
+    val step = Program.update(f)
     val s1 = Seq(Event.Pressed(rozum), Event.Edited("compose", "on it, measuring"),
                  Event.Pressed(nadia), Event.Edited("compose", "how many cases?"),
                  Event.Pressed(rozum)).foldLeft(init)(step)
     assertEquals(s1.focus, Some(rozum))
-    assertEquals(draft(Workspace.view(Layout.Wide())(s1)), "on it, measuring")
-    assertEquals(draft(Workspace.view(Layout.Narrow())(s1)), "on it, measuring")
+    assertEquals(draft(Program.view(Layout.Wide())(s1)), "on it, measuring")
+    assertEquals(draft(Program.view(Layout.Narrow())(s1)), "on it, measuring")
     val s2 = step(s1, Event.Pressed(nadia))
-    assertEquals(draft(Workspace.view(Layout.Wide())(s2)), "how many cases?")
+    assertEquals(draft(Program.view(Layout.Wide())(s2)), "how many cases?")
     // sending clears only that room's draft, posts to the fixture, and leaves the other room's draft alone
     val s3 = step(s2, Event.Pressed("send"))
     assertEquals(f.posted(Room("nadia", "nadia")).last.text, "how many cases?")
@@ -78,19 +78,19 @@ class WorkspaceTest extends munit.FunSuite:
 
   test("S2 — a message posted while the reader looks is seen; one posted while away is unread") {
     val (f, init) = fresh
-    val step = Workspace.update(f)
+    val step = Program.update(f)
     val away = step(step(init, Event.Pressed(rozum)), Event.Pressed(nadia))
     f.post(Room("rozum", "rozum"), "done: rerank landed")
     val back = step(away, Event.Pressed("refresh"))
     assertEquals(back.unread(Room("rozum", "rozum")), 1)
-    assert(text(Workspace.view(Layout.Wide())(back)).contains("rozum +1"))
+    assert(text(Program.view(Layout.Wide())(back)).contains("rozum +1"))
     val there = step(back, Event.Pressed(rozum))
     assertEquals(there.unread(Room("rozum", "rozum")), 0)
   }
 
   test("S2 — the addressee: focusing an agent speaks in its project room, prefixed") {
     val (f, init) = fresh
-    val step = Workspace.update(f)
+    val step = Program.update(f)
     val s = Seq(Event.Pressed("agent.claude-1"), Event.Edited("compose", "status?"), Event.Pressed("send")).foldLeft(init)(step)
     assertEquals(f.posted(Room("rozum", "rozum")).last.text, "@nimble-raven status?")
     assertEquals(s.context("agent.claude-1").addressee, "nimble-raven")
@@ -99,11 +99,12 @@ class WorkspaceTest extends munit.FunSuite:
   test("THE SEAM — the same walk in a chat behind Wire.serve reaches the scripted host's state") {
     // (a) the scripted host, the wide layout
     val (fa, ia) = fresh
-    val th = new Host:
+    final class TestHost extends Host:
       val feed = Channel[Event]()
       def render(ui: Ui): Unit ! Async = async(())
       def events: Source[Event] = Writer.of(feed)
-    val local = Async.spawn(Ui.run(ia)(Workspace.view(Layout.Wide()))(Workspace.update(fa))(th))
+    val th = TestHost()
+    val local = Async.spawn(Ui.run(ia)(Program.view(Layout.Wide()))(Program.update(fa))(th))
     Seq(Event.Pressed(rozum), Event.Edited("compose", "hello from the terminal"), Event.Pressed("send"),
         Event.Pressed(nadia), Event.Closed).foreach(th.feed.offer)
     val expected = local.join()
@@ -120,8 +121,8 @@ class WorkspaceTest extends munit.FunSuite:
         }
       drain(through[String, String, Async, Unit, Workspace](Writer.of(up))(
         !.widen[Workspace, okay.Take % String + Writer % String, Async](
-          Wire.serveClosing(ib)(Workspace.view(Layout.Narrow()))((s, e) =>
-            val s2 = Workspace.update(fb)(s, e); (s2, e == Event.Pressed(nadia))))))
+          Wire.serveClosing(ib)(Program.view(Layout.Narrow()))((s, e) =>
+            val s2 = Program.update(fb)(s, e); (s2, e == Event.Pressed(nadia))))))
     }
     // the chat: every frame the host draws; a step waits for the frames a
     // press causes and takes the LAST — one event may arrive as several

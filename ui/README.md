@@ -9,8 +9,8 @@ knows which.
 ```
 Model.scala      the "what": World (what the daemons say) · Context per item (what
                  switching keeps) · Workspace (focus + contexts + world)
-Workspace.scala  view(layout)(state) and update(feed)(state, event) — one of each
-Feed.scala       where the world comes from: Fixture (in memory) · Rozum (the
+Program.scala    view(layout)(state) and update(feed)(state, event) — one of each
+Feed.scala       where the world comes from: InMemory (in memory) · Rozum (the
                  meeting daemon's REST on :8401)
 Main.scala       the hosts: terminal · chat (the Telegram host, driven from the
                  console) · wire (JSON lines on stdio, for a client in any language)
@@ -29,13 +29,15 @@ sbt okayJVM/publishLocal okayOpticsJVM/publishLocal okayAsyncJVM/publishLocal \
     okayUiJVM/publishLocal
 ```
 
-Then here: `sbt test` (offline, the fixture), and
+Then here: `sbt test` (offline, the fixture), `sbt "Test/runMain nadia.ui.Show"`
+(the same state as the terminal and as a chat draw it), and — outside sbt,
+because every host here reads the console and sbt reads it first —
 
 ```
-sbt "run terminal --fixture"                       # this terminal, the wide layout
-sbt "run chat --fixture"                           # the Telegram host on the console: a number presses a button
-ROZUM_MEETING_TOKEN=… sbt "run terminal"           # the live daemon (rozum meetings token issue <handle>)
-sbt "run wire --fixture" | …                       # Protocol lines: Hello / Tree / Patch / Event / Close
+./run.sh terminal --fixture                        # this terminal, the wide layout
+./run.sh chat --fixture                            # the Telegram host on the console: a number presses a button
+ROZUM_MEETING_TOKEN=… ./run.sh terminal            # the live daemon (rozum meetings token issue <handle>)
+./run.sh wire --fixture | …                        # Protocol lines: Hello / Tree / Patch / Event / Close
 ```
 
 ## What the tests prove (`WorkspaceTest`)
