@@ -446,6 +446,11 @@ actor messages, so nothing agent-side is telegram-specific. rozum already runs
 the bridge shape (`com.rozum.telegram`, per-room ACL rosters, in-chat
 management); nadia reuses that pattern rather than inventing another.
 
+> 2026-09-28: the bot that fronts nadia is the workspace UI's Telegram host
+> (`rozum:docs/specs/okay-workspace-ui.md`) — one program drawn by a chat as by a terminal or a browser;
+> stage 1 rides rozum's bridge as a transport, then a new bot on okay. The promise above is unchanged:
+> nothing agent-side is Telegram-specific. What `serve` owes that UI is NAD-14.
+
 ## 8. Deployment and the model source
 
 Two axes, independent, and neither may constrain the other.

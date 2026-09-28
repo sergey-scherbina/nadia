@@ -180,3 +180,26 @@ not let this line disappear before a real run replaces it.
 
 - NAD-8 — subagents as actors over `std.actors` (`SPEC.md` §6).
 - NAD-9 — Telegram front-end (`SPEC.md` §7).
+
+### NAD-14 — the workspace UI on okay, and what `serve` owes it (rozum spec, 2026-09-28)
+
+`rozum:docs/specs/okay-workspace-ui.md` (operator direction, in-session): ONE remote workspace over
+every project, room, agent and chat, written once as a pure `State`/`view`/`update` over okay-ui and
+drawn by any host — terminal, browser, Telegram, a native app. The program and its service land HERE,
+in `ui/` as its own sbt build on okay (`dev.okay` `0.2.0-SNAPSHOT`, `sbt publishLocal` from `../okay`),
+NOT in `scala/` — that build is the one-dependency statement and stays so. Stages S0–S6 and their gates
+are on rozum's SPRINT under `okay-workspace-ui`.
+
+What the workspace needs from nadia that `serve` does not have (Rust twin, `rozum:crates/nadia/src/serve.rs`):
+
+- an **event stream** per agent (steps, tool calls, tokens) instead of a polled `Status`;
+- an **approval hook** — a spawned agent runs on auto-approve today (`ControlGate(LoopBreaker(tools))`,
+  no `Approver`); the workspace shows a tool approval as an okay `Form` (the MCP elicitation circle) and
+  answers it from any host, which needs `serve` to ask and wait;
+- a **persisted transcript**, so an agent's conversation is a `Chat` one can switch back to after a
+  restart (`records.rs` keeps metadata and the result only).
+
+Open with the operator whether this is in scope of the UI work or a separate lane; S5 (approvals) and
+the two-way agent chat in S4 are blocked on it either way. The Telegram front-end (NAD-9, §7) is
+resolved by the same spec: the bot is the workspace's Telegram host, eventually a new bot on okay, and
+nothing agent-side is Telegram-specific — exactly §7's promise, kept by a different bot.
