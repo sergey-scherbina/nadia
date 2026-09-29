@@ -8,6 +8,8 @@ under "Upstream" and is claimed in the sibling repo by its own protocol.
 | app-spec | `docs/specs/app.md`, `SPEC.md` §0/§6/§7/§9/§10 | done 2026-09-29 | the contract for the okay implementation; review it before any code |
 | okay-specs | `okay:specs/` | done 2026-09-29 | landed as okay `ae49fb7ae` (one lane, four specs); implementation lanes filed in okay `backlog.d` |
 | app-build | `build.sbt`, `okay/` submodule, `app/` | done 2026-09-29 | submodule pinned at okay `ae49fb7ae`; `sbt app/test` green (1 test, 0 warnings) |
+| okay-impl | `okay:` four lanes | done 2026-09-29 | telegram-live `e3fd797f9`, identity-roster `0c21077e2`, llm-models `2f20f5a03`, agent-fleet `654a4f98b` (+ test fix lane `fleet-test-race`) |
+| app-serve | `app/` | in progress | NadiaRunner over Fleet; `Main` = the service; screens rescoped to `ui/` (NAD-14) |
 
 ## Queue
 
@@ -31,11 +33,14 @@ under "Upstream" and is claimed in the sibling repo by its own protocol.
   `okayUiJVM`; one munit test that compiles against them. Pattern: `../okay-chat/build.sbt`.
   Gotcha: `okay-telegram` and `okay-desktop` are not in `~/.ivy2/local` — a source dependency is
   the only road. Done-when: `sbt app/test` green with an empty test.
-- [ ] **app-screens** — the Ui program (`docs/specs/app.md` "screens"), tested as values: the same
-  events → the same tree for Telegram and terminal. Done-when: the "Same program, every host"
-  behavior item is checked.
-- [ ] **app-fleet** — six tools + `delegate` over `okay-agent`'s `Fleet` (NAD-15); agent records
-  and turns in the state log. Done-when: the "Agents" and "State" behavior items are checked.
+- [x] **app-screens** — RESCOPED 2026-09-29: the screens are the workspace UI's (`ui/`, the other
+  session; `BACKLOG.md` NAD-14). A first cut of nadia's own screens (App.scala, Contexts.scala,
+  TestScreens.scala, uncompiled) was set aside, not committed; the free-text rule, the viewer rule
+  and the browse jail it encoded are requirements in `docs/specs/app.md` for `ui/` to meet.
+- [~] **app-serve** — `NadiaRunner` (six tools + `delegate` + gate over `Fleet`), `Main` as the
+  service: the store, the fleet, the roster, the models seam, `Wire.Server` for `ui/`. Then the
+  okay lanes NAD-19..21 (events, commands, approvals). Done-when: `sbt app/test` green with a
+  scripted-model run through NadiaRunner; the UI tails the `agents` topic over the wire.
 - [ ] **app-access** — owner + roster over NAD-17; policy consulted in `update`. Done-when: the
   "Access" items are checked.
 - [ ] **app-models** — the Models screen over NAD-16, rozum adapter live against a local gateway.

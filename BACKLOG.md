@@ -204,6 +204,78 @@ the two-way agent chat in S4 are blocked on it either way. The Telegram front-en
 resolved by the same spec: the bot is the workspace's Telegram host, eventually a new bot on okay, and
 nothing agent-side is Telegram-specific — exactly §7's promise, kept by a different bot.
 
+**Answer, 2026-09-29 (the agents session; split agreed with the operator: this session owns the
+agent model and the control protocol, the UI session owns `ui/` as its consumer).** The number
+collides with P4's NAD-14 above; this one is *the workspace one*.
+
+The protocol is okay's, not `serve`'s: `okay.agent.Fleet` in `okay-agent` (okay master
+`654a4f98b`, spec `okay:specs/agent-fleet.md`), and the UI consumes it **as a log, not as calls**
+— the same log the agents are restored from, so "what happened" and "what is happening" are one
+fold. The Rust `serve` is not extended.
+
+*Module and types* (`okay.agent`): `Spec(task, workspace, budget: Budget(steps, wallMs), parent?,
+model?)` · `AgentId` (opaque Long, `.n`) · `Phase` = Running | Paused | Stopping | Done | Failed |
+Killed | Interrupted · `Status(id, parent, task, workspace, phase, step, lastTool, elapsedMs,
+children, result, report: Option[Json])` · `Fleet.Control` = Tell(message) | Pause | Resume | Stop |
+Kill · `Outcome(text, report, phase)` · `Runner` (what runs ONE agent: nadia's six tools + gate; the
+UI never sees it) · `Fleet.Ctx` (what a runner asks between tool calls) · `Fleet.delegate(fleet,
+parent)` (the parent's seventh tool; a child's steps debit the parent).
+
+*In-process API* (one JVM — the nadia service): `Fleet.open(store, runner): Fleet ! Async`;
+`spawn(spec): AgentId ! Async`; `send(id, Control): Boolean ! Async`; `status(id)`, `all`,
+`transcript(id): Seq[Turn]`, `stepsLeft(id)`; `await(id)`; `close()`; `restore()`.
+
+*The record — what a WorldFeed folds instead of polling.* Topic `agents` in the nadia state store
+(`NADIA_STATE`, default `~/.nadia/app`, an okay-persist `FileStore`), one JSON object per record,
+keyed by the agent id, appended BEFORE the fleet applies it:
+
+| kind | fields |
+|---|---|
+| `spawned` | `id, task, workspace, steps, wallMs, parent?, model?, at` |
+| `phased` | `id, phase, at` |
+| `stepped` | `id, step, tool, at` |
+| `turned` | `id, turn: {t: system\|user\|assistant\|result\|summary\|patch, text?, calls?: [{id,name,args}], call?, content?, covers?, patch?}` |
+| `finished` | `id, phase, text, report?, at` |
+
+`Status` is the fold of those (the rules are `Fleet.restore`'s: a live phase after a process end is
+`Interrupted`); the transcript is the `turned` records — so an agent's conversation IS a `Chat` one
+switches back to after a restart, with nothing else to persist.
+
+*Subscribing.* `okay.persist.Streams.tail(topic, partition = 0, from, chunk)` is a
+`Source[Chunk[Record]]` that follows the log as it grows: the WorldFeed drains it and folds; no
+request to the agent, ever. In one process that is all. Across processes — `ui/` is its own
+build and process — the nadia service serves its store with `okay.persist.Wire.Server` and the UI
+opens it as a `RemoteStore` (both exist, JVM); a second process may TAIL a `FileStore` read-only
+(that arrangement is the one FileStore's header describes), but must not write to it, which is why
+the control plane below goes over the wire too.
+
+*Still to land, in okay, each its own lane* (filed under P6 below as NAD-19..21; the UI's S4/S5 wait
+on them):
+
+- **`fleet-events`** — `Fleet.events(topic): Source[Fleet.Event]` (the typed decoder of the table
+  above, so a feed folds values, not JSON) and in-process `fleet.events`.
+- **`fleet-commands`** — the control plane as a topic `commands` the service folds: `spawn{task,
+  workspace, steps, wallMs, parent?, model?, by}`, `tell{id, message, by}`, `pause|resume|stop|kill
+  {id, by}`, `approve{id, seq, yes, by}`; `by` is the principal, checked by the service against the
+  roster (`okay.security.Roster`, landed `0c21077e2`: owner, `operator` scoped to a project,
+  `viewer`). A command refused is a record too (`refused{seq, why}`), so the UI shows why.
+- **`fleet-approvals`** — `Ctx.ask(step, call): Boolean ! Async`: the runner asks before
+  `write_file`/`edit_file`/`bash` (nadia `SPEC.md` §3.3, the REPL's `y/n/a`), the fleet appends
+  `asked{id, seq, tool, args, at}` and parks until an `approve`; `Status` gains `asking:
+  Option[Ask]`; `Control.Approve(seq, yes)`. Auto-approve is an approver that answers yes — the batch
+  runner's default, never the workspace's.
+
+*What the UI can already use today:* `okay.llm.Models` (landed `2f20f5a03`) for a Models screen —
+`Catalog`/`Residency` with the rozum adapter's resident mark, `load`/`unload` over the gateway's
+control routes; and `okay.telegram.Chats(…, everyMs)` + `okay.telegram.Command` (landed `e3fd797f9`)
+for its Telegram host — the coalesced edits a live agent card needs, and a command menu from the
+screen table.
+
+*What this settles in this repository:* `docs/specs/app.md`'s screens are the workspace's
+(`rozum:docs/specs/okay-workspace-ui.md`), drawn from `ui/`; `app/` is the SERVICE — the fleet,
+nadia's runner (six tools, sandbox, prompt, gate over okay-agent), the roster, the models seam, and
+the store served over the wire — and carries no screen of its own.
+
 ## P6 — the okay implementation: upstream in `../okay`
 
 Each is a spec in `okay:specs/` first, by that repository's claim/worktree protocol, then code
@@ -246,3 +318,18 @@ address) → Principal`, roles as facts the `Policy` reads.
 `Chats.perform` edits a message per `Act`; a running agent changes status faster than the Bot
 API allows edits. Needed: a throttle per message (at most one edit per N ms, last write wins),
 and `setCommands` derived from a screen table so the command menu and the screens cannot drift.
+
+### NAD-19 — `fleet-events` (**upstream: okay**)
+
+`Fleet.events(topic): Source[Fleet.Event]`, the typed decoder of the `agents` record, and in-process
+`fleet.events`; what the workspace's WorldFeed folds (NAD-14 answer above).
+
+### NAD-20 — `fleet-commands` (**upstream: okay**)
+
+The control plane as a `commands` topic the service folds — spawn/tell/pause/resume/stop/kill/approve
+with a `by` principal checked against the roster; a refusal is a record.
+
+### NAD-21 — `fleet-approvals` (**upstream: okay**)
+
+`Ctx.ask(step, call)` parks the runner until an `approve`; `asked` records; `Status.asking`;
+`Control.Approve`. The REPL's `y/n/a` (SPEC §3.3) answered from any host.

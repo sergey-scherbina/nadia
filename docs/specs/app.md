@@ -1,8 +1,19 @@
 # nadia as an okay application — one program, every screen
 
-**Status:** spec, not yet implemented. Written 2026-09-29 before any code, per `AGENTS.md`.
+**Status:** spec; the platform half landed in okay 2026-09-29 (`ae49fb7ae` the specs, then
+`e3fd797f9` telegram-live, `0c21077e2` identity-roster, `2f20f5a03` llm-models, `654a4f98b`
+agent-fleet); `app/` is being built against it.
 **Global spec:** `SPEC.md` §0 (the fourth implementation), §6 (subagents), §7 (Telegram), §10
 (model management) — this file is the design those sections point at.
+
+> **Rescoped 2026-09-29, by the operator's split with the workspace-UI session:** the SCREENS below
+> are drawn by `ui/` — the workspace of `rozum:docs/specs/okay-workspace-ui.md`, one program for
+> projects, rooms, agents and chats — and not by `app/`. `app/` is the SERVICE: the fleet, nadia's
+> runner (the six tools, the sandbox, the prompt, the gate over okay-agent), the access roster, the
+> models seam, and the state log served over the wire. What the UI consumes is written under
+> `BACKLOG.md` NAD-14 (the record, the subscription, the control plane, approvals). The screen
+> table, the free-text rule and the access rules below stay as the *requirements* the workspace
+> meets for nadia's agents; where `ui/` draws them differently, `ui/` decides.
 
 ## Overview
 
@@ -29,18 +40,18 @@ lives in `okay`, and where `okay` lacks it, `okay` is extended first.
 
 ### Where it lives
 
-A fourth implementation beside the three of `SPEC.md` §0, in `app/`:
+A fourth implementation beside the three of `SPEC.md` §0, in `app/` (the service) and `ui/` (the
+workspace, the UI session's):
 
 ```
 build.sbt                 root sbt build: `app` depends on okay modules by ProjectRef
 okay/                     git submodule → ../okay (source dependency, no publishing)
 app/src/main/scala/nadia/
-  app/App.scala           the Ui program: screens, update, one `view`
-  app/Screens.scala       the view values (Home, Projects, Project, Agents, Agent, Models, Access)
-  agent/Nadia.scala       the agent: six tools + `delegate`, prompt, gate — over okay-agent
-  agent/Fleet.scala       the hierarchy: spawn/tell/status/pause/resume/stop/kill over okay-actor
-  Main.scala              `nadia app [--telegram] [--console]`; wiring, nothing else
+  agent/NadiaRunner.scala the agent: six tools + `delegate`, prompt, gate — over okay-agent's Fleet
+  Main.scala              `nadia-app serve`: the store, the fleet, the roster, the models seam,
+                          the wire — wiring, nothing else
 app/src/test/scala/...    munit
+ui/                       the workspace program and its hosts (its own build; NAD-14)
 ```
 
 The six tools, the sandbox, the prompt and the gate are the ones in `scala/rozum/` — the same
@@ -48,7 +59,7 @@ policy, wrapped into an okay `Toolbox`. They are not rewritten; if they are reus
 sbt project adds `scala/rozum` and `scala/sdk` as a source directory, and that is decided at
 implementation time by whichever is smaller.
 
-### The program: screens
+### The program: screens (drawn by `ui/` — see the rescoping note above)
 
 One okay-ui program. Every surface draws the same `Ui` value; a Telegram chat draws it as one
 message with an inline keyboard, edited in place (`okay:specs/ui-telegram.md`); the console draws
