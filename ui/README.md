@@ -12,9 +12,19 @@ Model.scala      the "what": World (what the daemons say) · Context per item (w
 Program.scala    view(layout)(state) and update(feed)(state, event) — one of each
 Feed.scala       where the world comes from: InMemory (in memory) · Rozum (the
                  meeting daemon's REST on :8401)
+Shared.scala     ONE session, many devices: the state cell every host folds into
+                 and is told about; the journal (JSON lines, intent-first) it is
+                 recovered from — so quitting the terminal and opening the chat
+                 continues where you were
 Main.scala       the hosts: terminal · chat (the Telegram host, driven from the
                  console) · wire (JSON lines on stdio, for a client in any language)
 ```
+
+The session lives at `$XDG_STATE_HOME/nadia/workspace.jsonl` (`workspace-fixture.jsonl`
+with `--fixture`; `NADIA_UI_JOURNAL` overrides; `--fresh` starts over). Focus is part
+of the session, so a room opened on the phone is open on the terminal — "continue
+where I left off"; a per-device focus would be a map keyed by device, a decision
+to revisit with real use.
 
 ## Build
 
@@ -50,3 +60,9 @@ ROZUM_MEETING_TOKEN=… ./run.sh terminal            # the live daemon (rozum me
 - **the seam** the same walk in a chat behind `Wire.serve` (the narrow layout,
   `Telegram.host`, scripted presses and one said line) reaches the scripted
   host's state, and the message it sent landed in the room.
+- **S2, one session** (`SharedTest`): two devices on one session — the draft
+  typed on the wide one is on the narrow one, the room switched on the narrow
+  one is switched on the wide one, drafts stay per room; live == recovery over
+  one journal, and a recovery never speaks in a room again (found by that test:
+  the refold goes through a feed whose posts already happened); the file journal
+  is appended intent-first, read back whole, damage dropped.

@@ -22,15 +22,24 @@ import okay.ui.{Event, Host, Terminal, Telegram, Ui, Wire}
 object Main:
   def main(args: Array[String]): Unit =
     val mode = args.headOption.getOrElse("terminal")
+    val fixture = args.contains("--fixture") || sys.env.get("ROZUM_MEETING_TOKEN").forall(_.isEmpty)
     val feed: WorldFeed =
-      if args.contains("--fixture") || sys.env.get("ROZUM_MEETING_TOKEN").forall(_.isEmpty) then InMemory()
+      if fixture then InMemory()
       else Rozum(sys.env.getOrElse("ROZUM_MEETING_BASE", "http://127.0.0.1:8401"), sys.env("ROZUM_MEETING_TOKEN"))
-    val init = Program.update(feed)(Workspace(), Event.Pressed("refresh"))
+    // ONE session on disk, whichever host opens it: quit the terminal, open the
+    // chat, the draft and the room are there. `--fresh` starts it over.
+    val journalPath = sys.env.get("NADIA_UI_JOURNAL").map(java.nio.file.Path.of(_)).getOrElse {
+      val state = sys.env.get("XDG_STATE_HOME").map(java.nio.file.Path.of(_))
+        .getOrElse(java.nio.file.Path.of(sys.props("user.home"), ".local", "state"))
+      state.resolve("nadia").resolve(if fixture then "workspace-fixture.jsonl" else "workspace.jsonl")
+    }
+    if args.contains("--fresh") then java.nio.file.Files.deleteIfExists(journalPath): Unit
+    val shared = Shared(feed, Journal.file(journalPath))
     mode match
-      case "terminal" => terminal(feed, init)
-      case "chat" => chat(feed, init)
-      case "wire" => wire(feed, init)
-      case other => System.err.println(s"unknown mode $other: terminal | chat | wire [--fixture]")
+      case "terminal" => terminal(shared)
+      case "chat" => chat(shared)
+      case "wire" => wire(shared)
+      case other => System.err.println(s"unknown mode $other: terminal | chat | wire [--fixture] [--fresh]")
 
   /** a refresh every few seconds, as an event the tree permits (the ↻ button is on it) */
   private def ticks(every: Long): Source[Event] =
@@ -39,14 +48,11 @@ object Main:
     t.setDaemon(true); t.start()
     Writer.of(ch)
 
-  private def terminal(feed: WorldFeed, init: Workspace): Unit =
-    val update = Program.update(feed)
-    val end = Ui.runCmd(init)(Program.view(Layout.Wide()))((s, e) =>
-      val s2 = update(s, e)
-      (s2, if s2.quit then Vector(async(Event.Closed)) else Vector.empty))(Terminal.host(), ticks(3000)).runWith
+  private def terminal(shared: Shared): Unit =
+    val end = shared.attach(Terminal.host(), Layout.Wide(), ticks(3000)).runWith
     println(s"\nbye — ${end.contexts.size} contexts kept")
 
-  private def chat(feed: WorldFeed, init: Workspace): Unit =
+  private def chat(shared: Shared): Unit =
     import Telegram.{Act, Key, Update}
     @volatile var buttons = Vector.empty[(String, String)] // label -> callback data, numbered
     val frames = new java.util.concurrent.atomic.AtomicInteger(0)
@@ -65,8 +71,7 @@ object Main:
       case Act.Ask(prompt) => async { println(s"? $prompt"); None }
       case Act.Answer(_, notice) => async { if notice.nonEmpty then println(s"! $notice"); None }
     }
-    val update = Program.update(feed)
-    val loop = Async.spawn(Ui.run(init)(Program.view(Layout.Narrow()))(update)(host))
+    Async.spawn(shared.attach(host, Layout.Narrow())): Unit
     settle(0)
     val in = scala.io.Source.stdin.getLines()
     while in.hasNext do
@@ -78,17 +83,13 @@ object Main:
     println("bye")
     System.exit(0)
 
-  private def wire(feed: WorldFeed, init: Workspace): Unit =
-    val up = Channel[String](); val down = Channel[String]()
+  private def wire(shared: Shared): Unit =
+    val up = Channel[String]()
     val reader = new Thread(() => { scala.io.Source.stdin.getLines().foreach(up.offer); up.close() })
     reader.setDaemon(true); reader.start()
-    val update = Program.update(feed)
     def drain(p: Workspace ! Writer % String + Async): Unit ! Async =
       Writer.uncons[String, Workspace, Async](p).flatMap {
-        case Left(_) => async { down.close() }
+        case Left(_) => pure(())
         case Right((l, rest)) => async { println(l); System.out.flush() }.flatMap(_ => drain(rest))
       }
-    drain(through[String, String, Async, Unit, Workspace](Writer.of(up))(
-      !.widen[Workspace, okay.Take % String + Writer % String, Async](
-        Wire.serveClosing(init)(Program.view(Layout.Wide()))((s, e) =>
-          val s2 = update(s, e); (s2, s2.quit))))).runWith
+    drain(shared.serve(Layout.Wide())(Writer.of(up))).runWith

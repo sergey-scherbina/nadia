@@ -7,8 +7,13 @@
 set -e
 cd "$(dirname "$0")"
 CP=target/classpath.txt
+SBT=${SBT:-sbt}
 if [ ! -s "$CP" ]; then
   mkdir -p target
-  sbt -batch "export Runtime/fullClasspath" 2>/dev/null | grep '^/' | tail -1 > "$CP"
+  "$SBT" -batch "export Runtime/fullClasspath" 2>/dev/null | grep '^/' | tail -1 > "$CP"
+  if [ ! -s "$CP" ]; then
+    echo "run.sh: could not export the classpath with '$SBT' — is sbt on PATH (or SBT=/path/to/sbt)?" >&2
+    rm -f "$CP"; exit 1
+  fi
 fi
 exec java -Dstdout.encoding=UTF-8 -Dfile.encoding=UTF-8 -cp "$(cat "$CP")" nadia.ui.Main "$@"

@@ -14,6 +14,13 @@ trait WorldFeed:
   def world(focus: Option[String]): World
   /** post into a room; the error is a string a notice can show */
   def post(room: Room, content: String): Either[String, Unit]
+  /** the same world, and a `post` that already happened: what a journal is
+   * refolded through, so recovering a session never speaks in a room twice */
+  final def replaying: WorldFeed =
+    val outer = this
+    new WorldFeed:
+      def world(focus: Option[String]): World = outer.world(focus)
+      def post(room: Room, content: String): Either[String, Unit] = Right(())
 
 /** an in-memory world: three projects, a few messages, posting appends */
 final class InMemory extends WorldFeed:

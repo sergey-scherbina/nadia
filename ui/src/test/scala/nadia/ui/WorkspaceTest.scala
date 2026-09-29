@@ -170,3 +170,85 @@ class WorkspaceTest extends munit.FunSuite:
     assertEquals(fb.posted(Room("rozum", "rozum")).last.text, "hello from the terminal")
     assertEquals(expected.focus, Some(nadia))
   }
+
+/** the second half of S2: one session, many devices, and a restart that loses nothing */
+class SharedTest extends munit.FunSuite:
+  override val munitTimeout = scala.concurrent.duration.Duration(20, "s")
+  val rozum = "room.rozum.rozum"; val nadia = "room.nadia.nadia"
+
+  final class Device extends Host:
+    val feed = Channel[Event]()
+    val frames = new java.util.concurrent.LinkedBlockingQueue[Ui]()
+    def render(ui: Ui): Unit ! Async = async { frames.put(ui); () }
+    def events: Source[Event] = Writer.of(feed)
+    /** the frames drawn so far, waiting until one satisfies p (5 s) */
+    def until(p: Ui => Boolean): Ui =
+      val deadline = System.currentTimeMillis + 5000
+      var last: Ui = null
+      while System.currentTimeMillis < deadline do
+        val f = frames.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+        if f != null then { last = f; if p(f) then return f }
+      fail(s"no such frame; last: ${Option(last).map(Frame.render(_).mkString("|"))}")
+  def draft(ui: Ui): String =
+    def go(u: Ui): Option[String] = u match
+      case Ui.Input(v, "compose", _, _, _) => Some(v)
+      case Ui.Row(c, _) => c.view.flatMap(go).headOption
+      case Ui.Column(c, _) => c.view.flatMap(go).headOption
+      case Ui.Box(c, _, _, _, _, _) => c.view.flatMap(go).headOption
+      case Ui.Scroll(c, _) => go(c)
+      case Ui.Form(f, _, _) => f.view.flatMap(go).headOption
+      case Ui.Items(i, _) => i.view.flatMap(go).headOption
+      case _ => None
+    go(ui).getOrElse("")
+
+  test("S2 — two devices, one session: the draft typed on the terminal is on the phone, and back") {
+    val shared = Shared(InMemory(), Journal.memory())
+    val a = Device(); val b = Device()
+    val la = Async.spawn(shared.attach(a, Layout.Wide()))
+    val lb = Async.spawn(shared.attach(b, Layout.Narrow()))
+    a.until(_ => true); b.until(_ => true)
+    a.feed.offer(Event.Pressed(rozum)); a.feed.offer(Event.Edited("compose", "typed on A"))
+    // the phone, having done nothing, shows the room the terminal opened and its draft
+    val onB = b.until(draft(_) == "typed on A")
+    assert(Frame.render(onB).mkString("\n").contains("how is the rerank going?"))
+    // the phone switches rooms; the terminal follows, and the draft is per room
+    b.feed.offer(Event.Pressed(nadia))
+    val onA = a.until(f => Frame.render(f).mkString("\n").contains("▶ nadia"))
+    assertEquals(draft(onA), "")
+    b.feed.offer(Event.Pressed(rozum))
+    assertEquals(draft(a.until(draft(_) == "typed on A")), "typed on A")
+    a.feed.offer(Event.Closed); b.feed.offer(Event.Closed)
+    la.join(); lb.join()
+    assertEquals(shared.state.context(rozum).draft, "typed on A")
+  }
+
+  test("S2 — live == recovery: a restart over the same journal reaches the same session") {
+    // the world outlives the session, as the daemon does: one fixture, two sessions over one journal
+    val world = InMemory()
+    val journal = Journal.memory()
+    val live = Shared(world, journal)
+    Seq(Event.Pressed(rozum), Event.Edited("compose", "kept"), Event.Pressed(nadia),
+        Event.Edited("compose", "sent"), Event.Pressed("send"), Event.Pressed("refresh"), Event.Pressed(rozum))
+      .foreach(live.apply)
+    val recovered = Shared(world, journal)
+    val same = (w: Workspace) => (w.focus, w.contexts)
+    assertEquals(same(recovered.state), same(live.state))
+    assertEquals(recovered.state.context(rozum).draft, "kept")
+    // the refold does not speak in the room again: the message sent live is there ONCE
+    assertEquals(world.posted(Room("nadia", "nadia")).count(_.text == "sent"), 1)
+    // refreshes are not journaled; the human's acts are
+    assertEquals(journal.lines.size, 6)
+  }
+
+  test("S2 — the file journal: appended intent-first, read back whole, damage dropped") {
+    val dir = java.nio.file.Files.createTempDirectory("nadia-ui")
+    val path = dir.resolve("state").resolve("workspace.jsonl")
+    val j = Journal.file(path)
+    val s = Shared(InMemory(), j)
+    s(Event.Pressed(rozum)); s(Event.Edited("compose", "on disk"))
+    java.nio.file.Files.writeString(path, "{ damaged\n", java.nio.file.StandardOpenOption.APPEND)
+    val back = Shared(InMemory(), Journal.file(path))
+    assertEquals(back.state.focus, Some(rozum))
+    assertEquals(back.state.context(rozum).draft, "on disk")
+    assertEquals(Journal.file(path).lines.size, 3)
+  }
