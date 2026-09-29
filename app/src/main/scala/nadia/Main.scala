@@ -5,7 +5,7 @@ import okay.given
 import okay.agent.{Budget, Fleet, Model, Phase, Provider, Spec}
 import okay.llm.{Models, Transports as LlmTransports}
 import okay.persist.{FileStore, Wire}
-import okay.security.{Channel as Door, Roster}
+import okay.security.{Channel as Door, Decision, Policy, Principal, Roster}
 import nadia.agent.NadiaRunner
 import nadia.rozum.Gateway
 import _root_.agent.{Auth, Endpoint}
@@ -28,7 +28,7 @@ object Main:
   def env(k: String): Option[String] = sys.env.get(k).map(_.trim).filter(_.nonEmpty)
 
   /** everything a run needs, built once from the environment */
-  final class Service:
+  final class Service(batch: Boolean = false):
     val state = java.nio.file.Paths.get(env("NADIA_STATE").getOrElse(sys.props("user.home") + "/.nadia/app"))
     java.nio.file.Files.createDirectories(state)
     val store = FileStore.open(state)
@@ -58,7 +58,9 @@ object Main:
     val models: Models.Catalog & Models.Residency = Models.rozum(wire, base)
 
     private var fleetRef: Fleet = null
-    val runner = NadiaRunner(() => fleetRef, modelHandler, gateClient)
+    /** the service asks before a write (an operator is watching); `run` auto-approves, as batch does */
+    val asks: Spec => Boolean = _ => env("NADIA_APPROVE").forall(_ != "auto") && !batch
+    val runner = NadiaRunner(() => fleetRef, modelHandler, gateClient, asks)
     fleetRef = NadiaRunner.block(Fleet.open(store, runner))
     val fleet: Fleet = fleetRef
     val budget = Budget(env("NADIA_MAX_STEPS").flatMap(_.toIntOption).getOrElse(24), 30 * 60 * 1000L)
@@ -72,11 +74,31 @@ object Main:
       // and everything else stay the service's
       val served = Set("agents", "commands")
       val server = Wire.Server(s.store, t => if token.forall(_ == t) then Some(served) else None, requested = port)
+      // the control plane: the UI appends to `commands` as a principal; the roster decides
+      // (the owner everything; an operator within their project; a viewer nothing), and a
+      // refusal goes on the record the UI already watches
+      val may: Policy = Policy.anyOf(Roster.role(s.roster, Roster.Owner), Roster.role(s.roster, "operator"))
+      def allow(by: String, c: Fleet.Command): Either[String, Unit] =
+        val me = Principal(by, by, okay.security.Claims())
+        val resource = c match
+          case Fleet.Command.Spawn(spec, _) => spec.workspace
+          case Fleet.Command.Send(id, _, _) => s.fleet.status(id).map(_.workspace).getOrElse("")
+        val inRoots = c match
+          case Fleet.Command.Spawn(spec, _) => s.roots.exists(r => spec.workspace == r || spec.workspace.startsWith(r + "/"))
+          case _ => true
+        if !inRoots then Left(s"'$resource' is outside every project root")
+        else may(me, "run", resource) match
+          case Decision.Permit => Right(())
+          case Decision.Deny(why) => Left(why)
+      val offsetFile = s.state.resolve("commands.offset")
+      val from = if java.nio.file.Files.exists(offsetFile) then java.nio.file.Files.readString(offsetFile).trim.toLongOption.getOrElse(0L) else 0L
+      val control = Async.spawn(s.fleet.commands(s.store.topic("commands"), allow, from = from,
+        applied = o => java.nio.file.Files.writeString(offsetFile, (o + 1).toString): Unit))
       Console.err.println(s"nadia-app: serving ${served.mkString(", ")} on 127.0.0.1:${server.port}" +
-        s" · ${s.fleet.all.size} agents on record · model ${s.provider}/${s.chosen} · roots ${s.roots.mkString(":")}")
-      Thread.currentThread.join()
+        s" · commands from offset $from · ${s.fleet.all.size} agents on record · model ${s.provider}/${s.chosen} · roots ${s.roots.mkString(":")}")
+      control.join()
     case "run" :: task :: rest =>
-      val s = Service()
+      val s = Service(batch = true)
       val dir = rest.headOption.getOrElse(sys.props("user.dir"))
       val id = NadiaRunner.block(s.fleet.spawn(Spec(task, dir, s.budget, None, Some(s.chosen))))
       val st = NadiaRunner.block(s.fleet.await(id))

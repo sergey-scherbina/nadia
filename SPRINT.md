@@ -9,7 +9,7 @@ under "Upstream" and is claimed in the sibling repo by its own protocol.
 | okay-specs | `okay:specs/` | done 2026-09-29 | landed as okay `ae49fb7ae` (one lane, four specs); implementation lanes filed in okay `backlog.d` |
 | app-build | `build.sbt`, `okay/` submodule, `app/` | done 2026-09-29 | submodule pinned at okay `ae49fb7ae`; `sbt app/test` green (1 test, 0 warnings) |
 | okay-impl | `okay:` four lanes | done 2026-09-29 | telegram-live `e3fd797f9`, identity-roster `0c21077e2`, llm-models `2f20f5a03`, agent-fleet `654a4f98b` (+ test fix lane `fleet-test-race`) |
-| app-serve | `app/` | in progress | NadiaRunner over Fleet; `Main` = the service; screens rescoped to `ui/` (NAD-14) |
+| app-serve | `app/` | in progress | NadiaRunner over Fleet (asks before writes), `Main serve` = store over the wire + the commands fold with the roster as policy; NAD-19..21 landed in okay (4bb7aec87, 526054610, ed81f9064) |
 
 ## Queue
 

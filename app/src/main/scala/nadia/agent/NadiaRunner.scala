@@ -21,7 +21,8 @@ import nadia.rozum.{Gate, Sandbox, Tools, systemPrompt}
  * plain functions they already are.
  */
 final class NadiaRunner(fleet: () => Fleet, model: Spec => Handler[Model],
-                        gate: Spec => Option[_root_.agent.ModelClient]) extends Runner:
+                        gate: Spec => Option[_root_.agent.ModelClient],
+                        asks: Spec => Boolean = _ => false) extends Runner:
 
   def run(id: AgentId, spec: Spec, ctx: Fleet.Ctx): Outcome ! Async = async {
     Sandbox.at(spec.workspace) match
@@ -40,11 +41,16 @@ final class NadiaRunner(fleet: () => Fleet, model: Spec => Handler[Model],
     var stopped = false
     // every tool call passes the fleet's checkpoint: the step is recorded,
     // a pause waits here, a stop or an exhausted budget ends the turn
+    val asking = asks(spec)
     val table: Map[String, ToolCall => String] = box.table.map { (name, f) =>
       name -> { (c: ToolCall) =>
         step += 1
         NadiaRunner.block(ctx.checkpoint(step, name)) match
           case Some(_) => stopped = true; "stopped: the operator halted this run, or its budget is spent — answer with what you have"
+          case None if asking && NadiaRunner.gated(name) =>
+            // SPEC §3.3: write_file / edit_file / bash ask first; the answer comes from any host
+            if NadiaRunner.block(ctx.ask(step, c)) then NadiaRunner.block(f(c))
+            else "refused: the operator did not approve this call — do something else, or explain what you would have done"
           case None => NadiaRunner.block(f(c))
       }
     }
@@ -90,6 +96,9 @@ final class NadiaRunner(fleet: () => Fleet, model: Spec => Handler[Model],
           Outcome(text, Some(NadiaRunner.reportJson(report)), if stopped then Phase.Interrupted else Phase.Done)
 
 object NadiaRunner:
+  /** the calls that change the world (SPEC §3.3); MCP tools would join them */
+  val gated: Set[String] = Set("write_file", "edit_file", "bash")
+
   /** run an Async program to its answer on this (virtual) thread */
   def block[A](p: A ! Async): A = Async.run[A, Pure](p).runWith
 

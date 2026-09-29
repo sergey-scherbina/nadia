@@ -339,15 +339,21 @@ and `setCommands` derived from a screen table so the command menu and the screen
 
 ### NAD-19 — `fleet-events` (**upstream: okay**)
 
+**Landed** in okay as `4bb7aec87` (2026-09-29); `okay:specs/agent-fleet.md`, the matching section.
+
 `Fleet.events(topic): Source[Fleet.Event]`, the typed decoder of the `agents` record, and in-process
 `fleet.events`; what the workspace's WorldFeed folds (NAD-14 answer above).
 
 ### NAD-20 — `fleet-commands` (**upstream: okay**)
 
+**Landed** in okay as `526054610` (2026-09-29); `okay:specs/agent-fleet.md`, the matching section.
+
 The control plane as a `commands` topic the service folds — spawn/tell/pause/resume/stop/kill/approve
 with a `by` principal checked against the roster; a refusal is a record.
 
 ### NAD-21 — `fleet-approvals` (**upstream: okay**)
+
+**Landed** in okay as `ed81f9064` (2026-09-29); `okay:specs/agent-fleet.md`, the matching section.
 
 `Ctx.ask(step, call)` parks the runner until an `approve`; `asked` records; `Status.asking`;
 `Control.Approve`. The REPL's `y/n/a` (SPEC §3.3) answered from any host.

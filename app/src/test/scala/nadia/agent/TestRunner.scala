@@ -93,3 +93,23 @@ class TestRunner extends munit.FunSuite:
     val answer = fleet.transcript(p).collectFirst { case Turn.Result("d1", r) => r }.get
     assert(answer.contains("\"result\":\"two lines\""), answer)
   }
+
+  test("asks: a write_file call waits for the operator; yes writes the file, no comes back as a refusal the model reads") {
+    val dir = workspace()
+    def writing(name: String) = Reply("", Seq(ToolCall("w", "write_file", Json.JObj(Vector("path" -> Json.JStr(name), "content" -> Json.JStr("x"))))))
+    val model = scripted(Seq(writing("a.txt"), writing("b.txt"), Reply("done", Nil)))
+    var fleet: Fleet = null
+    fleet = go(Fleet.open(MemoryStore(), NadiaRunner(() => fleet, _ => model, _ => None, _ => true)))
+    val id = go(fleet.spawn(Spec("write two files", dir, Budget(5, 60_000))))
+    until(fleet.status(id).exists(_.asking.exists(_.tool == "write_file")))
+    assertEquals(fleet.status(id).flatMap(_.asking).map(_.seq), Some(1L))
+    assert(go(fleet.send(id, Control.Approve(1, true))))
+    until(fleet.status(id).exists(_.asking.exists(_.seq == 2)))
+    assert(java.nio.file.Files.exists(java.nio.file.Paths.get(dir, "a.txt")), "approved: written")
+    assert(go(fleet.send(id, Control.Approve(2, false))))
+    val st = go(fleet.await(id)).get
+    assertEquals(st.phase, Phase.Done)
+    assert(!java.nio.file.Files.exists(java.nio.file.Paths.get(dir, "b.txt")), "refused: not written")
+    val refusal = fleet.transcript(id).collect { case Turn.Result("w", c) => c }.last
+    assert(refusal.startsWith("refused:"), refusal)
+  }
