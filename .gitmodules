@@ -1,0 +1,3 @@
+[submodule "okay"]
+	path = okay
+	url = https://github.com/sergey-scherbina/okay.git

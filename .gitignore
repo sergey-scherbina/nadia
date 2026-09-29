@@ -8,3 +8,9 @@ bin/lib/
 .metals/
 .bloop/
 .DS_Store
+target/
+.bsp/
+.metals/
+.bloop/
+project/target/
+project/project/
