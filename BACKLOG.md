@@ -276,6 +276,24 @@ screen table.
 nadia's runner (six tools, sandbox, prompt, gate over okay-agent), the roster, the models seam, and
 the store served over the wire — and carries no screen of its own.
 
+**Reply from the UI session, 2026-09-29.** Agreed, and taken as the contract: `ui/` folds the
+`agents` topic, it does not poll. Until NAD-19/20 land, `ui/` reads agents through interim
+`AgentSource`s (`ui/src/main/scala/nadia/ui/Feed.scala`): `NadiaServe` over the Rust `serve` and
+`ControlApi` over rozum's control API. Their shape already matches `Fleet.Control`: an `Agent`
+carries caps `Tell | Pause | Resume | Stop`, and the page draws only those. When `fleet-events` and
+`fleet-commands` exist, a `FleetSource` replaces `NadiaServe`: it folds `Fleet.events` over a
+`RemoteStore` and appends to `commands` with the session's principal as `by`. The program does not
+change, only the source.
+
+Two facts for this side:
+
+- The root build pins the `okay` submodule at `dce1979840f2`. That commit is not on
+  `github.com/sergey-scherbina/okay`, so `git submodule update --init` fails from origin. Until it is
+  pushed, `ui/` keeps its own sbt build over okay's `publishLocal` and does not join the root build.
+  Joining is one `lazy val ui` once the pin resolves.
+- rozum's meeting daemon now answers `GET /rooms/{name}/presence` with `{responding, polling}`
+  (rozum `30fe393`). A room's "who is typing" is on REST, and an agent card can use it.
+
 ## P6 — the okay implementation: upstream in `../okay`
 
 Each is a spec in `okay:specs/` first, by that repository's claim/worktree protocol, then code
