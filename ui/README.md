@@ -19,8 +19,12 @@ Shared.scala     ONE session, many devices: the state cell every host folds into
                  and is told about; the journal (JSON lines, intent-first) it is
                  recovered from — so quitting the terminal and opening the chat
                  continues where you were
+TelegramBot.scala the real bot over okay-telegram: one narrow host per chat on the
+                 shared session; only NADIA_TELEGRAM_USERS get in; a plain message
+                 is the composer (posted to the focused room, told to the focused agent)
 Main.scala       the hosts: terminal · chat (the Telegram host, driven from the
                  console) · wire (JSON lines on stdio, for a client in any language)
+                 · telegram (the real bot)
 ```
 
 The session lives at `$XDG_STATE_HOME/nadia/workspace.jsonl` (`workspace-fixture.jsonl`
@@ -55,6 +59,26 @@ ROZUM_MEETING_TOKEN=… ./run.sh terminal            # the live daemon (rozum me
 ./run.sh wire --fixture | …                        # Protocol lines: Hello / Tree / Patch / Event / Close
 ```
 
+## Telegram, on your machine
+
+```
+# once: a bot from @BotFather, and a meeting token
+rozum meetings token issue operator --role responder          # prints the token
+
+cd nadia/ui
+export TELEGRAM_BOT_TOKEN=…                                    # from @BotFather
+export ROZUM_MEETING_TOKEN=…                                   # from the line above
+export NADIA_SERVE_TOKEN=…  NADIA_WORKSPACES=~/projects        # optional: nadia agents
+./run.sh telegram
+```
+
+The first run lets nobody in: write `/start` to the bot, read `refused: user <id>` in
+the log, then `export NADIA_TELEGRAM_USERS=<id>` and start it again. After that the
+bot draws the workspace as one message with buttons, edited in place: rooms and
+agents, a room's latest messages, pause/resume/stop for nadia agents, a "new agent"
+form. Whatever you type in the chat goes to the room or agent that is open. The
+session is shared with `./run.sh terminal` on the same machine.
+
 ## What the tests prove (`WorkspaceTest`)
 
 - **S0** the scripted host and the terminal renderer draw the same frames; the
@@ -78,3 +102,8 @@ ROZUM_MEETING_TOKEN=… ./run.sh terminal            # the live daemon (rozum me
   starts an agent in the chosen project; a recovery replays commands without
   sending them again. A room shows who is typing (the daemon's new
   `GET /rooms/{n}/presence`).
+- **the bot** (`TelegramBotTest`, a recording Bot API): a stranger is dropped
+  without a word and logged with the id to allow; `/start` draws the workspace;
+  a plain message goes to the focused room, or is a `tell` to a focused nadia
+  agent. Live: a wrong token against the real api.telegram.org is a logged 401
+  with a growing wait, not a crash.
