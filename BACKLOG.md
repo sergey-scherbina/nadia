@@ -203,3 +203,38 @@ Open with the operator whether this is in scope of the UI work or a separate lan
 the two-way agent chat in S4 are blocked on it either way. The Telegram front-end (NAD-9, §7) is
 resolved by the same spec: the bot is the workspace's Telegram host, eventually a new bot on okay, and
 nothing agent-side is Telegram-specific — exactly §7's promise, kept by a different bot.
+
+## P6 — the okay implementation: upstream in `../okay`
+
+Each is a spec in `okay:specs/` first, by that repository's claim/worktree protocol, then code
+there; `app/` here consumes it by `ProjectRef`. Written 2026-09-29 from `docs/specs/app.md`.
+
+### NAD-15 — agent hierarchy in `okay-agent` (**upstream: okay**)
+
+`okay-agent` has the loop, tools, context and durable journals and **no subagents**: nothing
+spawns, delegates, or reports a child's status. Needed: `Fleet` over `okay-actor` — an agent as a
+supervised actor with a budget, `spawn/tell/status/pause/resume/stop/kill` as its messages
+(`SPEC.md` §6), `delegate` as a `Toolbox` tool whose child's steps come out of the parent's
+budget, `Status` as a value, and sessions (`Turn` history) on an `okay-persist` topic so a run
+resumes after a restart. Rejected: keeping the supervisor in nadia — it has no nadia in it.
+
+### NAD-16 — the models seam in `okay-llm` (**upstream: okay**)
+
+`SPEC.md` §10: `Models.Catalog` / `Residency` / `Store` as capabilities a provider may lack (a
+missing one is a missing method, not a failing one); adapters `openAi`, `anthropic` (catalog),
+`ollama`, `rozum` (all three; rozum's `/v1/models` + `/control/status|switch|unload|reload`);
+model-id equality across `org:repo` / `org/repo` / `hf:org/repo`. `okay-llm` today has no model
+listing at all.
+
+### NAD-17 — channel identity and roster in `okay-security` (**upstream: okay**)
+
+`okay-security` has `Principal`, `Policy`, `Capability` and no store: no users, no roles, no
+binding of a channel address (a Telegram user id, later a web session) to a principal. okay-chat
+wrote this as app code (`okaychat.Identity`); lift the shape: `Roster` on a topic, `bind(channel,
+address) → Principal`, roles as facts the `Policy` reads.
+
+### NAD-18 — a live card in `okay-telegram` (**upstream: okay**)
+
+`Chats.perform` edits a message per `Act`; a running agent changes status faster than the Bot
+API allows edits. Needed: a throttle per message (at most one edit per N ms, last write wins),
+and `setCommands` derived from a screen table so the command menu and the screens cannot drift.

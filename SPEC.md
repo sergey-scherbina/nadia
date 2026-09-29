@@ -4,7 +4,8 @@ An LLM coding agent driving a local model through the rozum gateway. Two
 front-ends over one loop: a headless **batch CLI** (a drop-in row in rozum's
 agentic matrix, alongside `claude` / `codex` / `opencode`) and an interactive
 **REPL chat**. Plus subagents as actors and a Telegram front-end, in the Rust
-implementation.
+implementation — and, in the fourth implementation (§0, `docs/specs/app.md`), one
+program drawn on every surface: Telegram, console, web, desktop, over one state.
 
 Status: **P0 shipped in three implementations** (§0). This spec was written
 before any of them and remains the contract they are reviewed against
@@ -20,6 +21,7 @@ sits underneath them.
 | **Rust** | `rozum:crates/nadia` | `rozum-agent` (loop, budgets), `rozum-gateway` (client) | The executable reference. Shipped first — Rust already had the process and stdin primitives the tools need. |
 | **ScalaScript** | `src/*.ssc` | `std.agent` (loop, streaming, retry, schemas) | Dogfoods the language. The thinnest of the three: the SDK carries Contracts 1–3. |
 | **Scala 3** | `scala/` | its own SDK in `scala/sdk/`, and under that only the JDK | Carries all three contracts itself, and separates them. |
+| **okay** | `app/` (spec: `docs/specs/app.md`) | `okay-agent`, `okay-actor`, `okay-persist`, `okay-security`, `okay-ui` + `okay-telegram` — the whole platform, as a submodule | The one with the most underneath, which is why it is the one that grows the surfaces: §6, §7 and §10 are implemented here, as one program every host draws. |
 
 The Scala 3 one exists to answer a question the other two cannot: *how much of an agent is
 the framework?* It has no external SDK — so it grew its own, and the split is the answer:
@@ -439,12 +441,38 @@ A parent may spawn children, giving a hierarchy. Each child gets its own
 workspace and its own budget, deducted from the parent's. Supervision policy:
 a crashed child reports to its parent as a tool error, not a cascade.
 
+**Who spawns.** The Rust reference spawns only on the operator's command — from the
+REPL, the HTTP surface or Telegram — and that satisfies this section for a batch
+runner. The okay implementation (§0) additionally lets **the parent delegate**: one
+tool beyond the six, `delegate(task, subdir?, budget?)`, which runs a child to
+completion and returns its final text with the gate's report. This is the seventh
+tool §2 allows, because a hierarchy is *impossible* with the six, not merely
+inconvenient. The child's steps come out of the parent's budget, so delegation
+cannot multiply a run's cost; and a delegated child is the same actor with the same
+messages, so the operator's `status`/`stop`/`kill` reach it like any other.
+
+Where the primitive comes from is the implementation's axis (§0): `std.actors` for
+ScalaScript, tokio tasks for Rust, `okay-actor` (typed mailbox, `spawnChild`,
+`Supervise.Stop`) for the okay one. The protocol above is what all of them expose.
+
 ## 7. Telegram front-end (P3)
 
-A third client over the same protocol as §6 — the bot maps commands onto the
-actor messages, so nothing agent-side is telegram-specific. rozum already runs
-the bridge shape (`com.rozum.telegram`, per-room ACL rosters, in-chat
-management); nadia reuses that pattern rather than inventing another.
+A third client over the same protocol as §6, so nothing agent-side is
+telegram-specific. Two shapes satisfy this section, and they are not the same
+product:
+
+- **A bridge** — text commands mapped onto the §6 messages. rozum runs this
+  (`rozum-meeting`'s `telegram/nadia.rs` over `nadia serve`, per-room ACL rosters,
+  `/spawn` `/tell` `/stop`…). It is complete for what it is and is not extended here.
+- **A screen** — the okay implementation's program drawn in a chat: one message with
+  an inline keyboard, edited in place, the same `Ui` value the console and the browser
+  draw (`okay:specs/ui-telegram.md`). Menus, buttons, a live agent card, model
+  selection, an access roster — `docs/specs/app.md` is the contract. The operator's
+  requirement it answers: *the same state on every surface, continued from any of
+  them.*
+
+In both, an unknown sender gets one line and no state; the owner is a Telegram user
+id from configuration, never "whoever finds the bot".
 
 > 2026-09-28: the bot that fronts nadia is the workspace UI's Telegram host
 > (`rozum:docs/specs/okay-workspace-ui.md`) — one program drawn by a chat as by a terminal or a browser;
@@ -514,3 +542,58 @@ Manifests live in `deploy/` and the containment flags they set are what makes
 | P3 | Telegram front-end | same protocol, no agent-side changes |
 | P4 | containers + hosted providers (§8) | a task runs to completion in a container against a gateway it does not share a machine with |
 | P5 | MCP client (§2.1) + `help`/`?` (§4.2) | a task completes using a tool no implementation ships, connected by name from a config the operator already had |
+| P6 | the okay implementation (§0, `docs/specs/app.md`): Telegram with buttons + console over one state, parent-driven hierarchy (§6), access roster, the models seam (§10) | a task started from the bot is delegated by its parent, steered from the console, survives a restart, and the Models screen switches rozum's resident model |
+| P7 | web and desktop hosts of the same program; sharing a chat or a project with another person | the same program, drawn in a browser and an app window, with a second principal steering an agent the owner watches |
+
+## 10. Model management — the seam and its adapters
+
+An operator wants to see which models a provider has, which one is resident, load and
+unload them, and pull and remove weights. No single standard covers that, because
+hosted providers have nothing to load; but two de-facto standards cover it between
+them, and the seam is their union with each half typed as a capability a provider may
+or may not have:
+
+| | catalog | residency | store |
+|---|---|---|---|
+| **OpenAI** | `GET /v1/models`, `GET /v1/models/{id}` | — | — (`DELETE /v1/models/{id}` is fine-tunes only) |
+| **Anthropic** | `GET /v1/models`, `GET /v1/models/{id}` — `id`, `display_name`, `created_at`, `max_input_tokens`, `max_tokens`, `capabilities` | — | — |
+| **Ollama** | `/v1/models` (OpenAI form) and `GET /api/tags` | `GET /api/ps` (`expires_at`, `size_vram`); load = a request with an empty prompt, unload = the same with `keep_alive: 0` | `POST /api/pull`, `DELETE /api/delete`, `POST /api/show` |
+| **LM Studio** | `GET /api/v0/models`, with a loaded/not-loaded state per model | `lms load` / `lms unload` (CLI; the v1 REST API adds routes) | download in the app |
+| **llama-swap** | `GET /v1/models` | `GET /running`; load is implicit in the `model` of a request; `POST /api/models/unload[/:id]` | — |
+| **rozum** | `GET /v1/models` | `GET /control/status`, `POST /control/switch` (drain → unload → load → resume, through the admission gate), `POST /control/unload`, `POST /control/reload`; CLI `rozum gateway switch\|unload\|reload` | `rozum models list\|info\|pull\|rm` |
+| **Hugging Face Hub** | the router's `/v1/models` for hosted; the Hub API for weights | — | download a repository (weights) |
+
+The seam, in `okay-llm` (its spec lives in `okay`, by that repository's procedure):
+
+```
+Models.Catalog    list: Seq[Model]           info(id): Option[Model]
+                  Model(id, owner, created, contextTokens?, maxOutput?, capabilities)
+Models.Residency  running: Seq[Resident]     load(id): Unit     unload(id): Unit
+                  Resident(id, memoryBytes?, expiresAt?)
+Models.Store      local: Seq[Weights]        pull(id): Source[Progress]     remove(id): Unit
+```
+
+Rules:
+
+1. **The catalog is OpenAI's shape** — the `object: "list"`, `data: [{id, owned_by,
+   created}]` every provider above returns — extended with the context and output
+   limits Anthropic's carries, optional where a provider does not say.
+2. **Residency and store are Ollama's verbs** — `ps`/`pull`/`rm`/load/unload — because
+   that is what the local runtimes (LM Studio, llama-swap, Docker Model Runner)
+   converged on, and an operator arriving from any of them knows the words.
+3. **A capability a provider lacks is not a method that fails; it is a method that
+   does not exist.** A hosted provider is `Catalog` only; a screen or a command drawn
+   from it has no `Load` button, rather than one that answers "not supported". This
+   is the same rule §3.2 states for confinement: an absence an operator can read as a
+   guarantee must not be a flag.
+4. **One model, several spellings, one identity** — §8.5 applies to the seam:
+   `org:repo`, `org/repo` and `hf:org/repo` compare equal in `list`, `running`,
+   `load` and `pull`, so a screen never shows the resident model as absent from the
+   catalog.
+5. **Adapters are in `okay`, one per provider: `openAi`, `anthropic`, `ollama`,
+   `rozum`.** nadia configures which; it never speaks a provider's management HTTP
+   itself. The rozum adapter is the one that carries all three capabilities and is the
+   default.
+6. **Switching the model for new work does not touch running work.** `Use` sets what
+   the next agent starts with; an agent already running keeps its model to the end, so
+   a transcript is never a mix.
