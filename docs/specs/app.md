@@ -159,15 +159,18 @@ Screens:
 Agents:
 - [ ] a task started from the chat appears in `Agents` with a phase, and its card is edited as it
       runs, no more than one edit per two seconds
-- [ ] `Stop` finishes the current tool and halts; `Kill` aborts; both are reflected in the card
-- [ ] a parent given a task that names two independent parts delegates twice; each child's steps
+- [x] `Stop` finishes the current tool and halts; `Kill` aborts; both are reflected in the card
+      (okay `TestFleet`; a budget stop through the real tools: `app` `TestRunner`)
+- [x] a parent given a task that names two independent parts delegates twice; each child's steps
       are deducted from the parent's budget; the parent's result carries both children's
-- [ ] a child that crashes shows in the parent's transcript as a tool error; the parent continues
+      (okay `TestFleet`, two children; through the runner's tool: `app` `TestRunner`)
+- [x] a child that crashes shows in the parent's transcript as a tool error; the parent continues
+      (okay `TestFleet`)
 - [ ] the gate's report reaches the chat as its own message, whatever the stop reason
 
 State:
-- [ ] restart with two running agents: both come back `Interrupted` with their transcripts, ids
-      continue from the last, and the chat's selected project is still selected
+- [~] restart with two running agents: both come back `Interrupted` with their transcripts, ids
+      continue from the last (okay `TestFleet`); the chat's selected project is `ui/`'s to keep
 - [ ] the console and the bot started against the same state directory show the same Agents list
 
 Models:
