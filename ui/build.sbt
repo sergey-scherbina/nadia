@@ -15,6 +15,7 @@ lazy val ui = (project in file("."))
     name := "nadia-ui",
     libraryDependencies ++= Seq(
       "dev.okay" %% "okay-ui" % okayVersion,
+      "dev.okay" %% "okay-telegram" % okayVersion,
       "org.scalameta" %% "munit" % "1.1.1" % Test),
     scalacOptions ++= Seq("-deprecation", "-feature"),
     // the terminal host owns stdin and paints stdout: the app must run in its own

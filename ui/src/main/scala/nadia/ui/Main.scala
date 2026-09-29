@@ -55,7 +55,8 @@ object Main:
       case "terminal" => terminal(shared)
       case "chat" => chat(shared)
       case "wire" => wire(shared)
-      case other => System.err.println(s"unknown mode $other: terminal | chat | wire [--fixture] [--fresh]")
+      case "telegram" => telegram(shared)
+      case other => System.err.println(s"unknown mode $other: terminal | chat | wire | telegram [--fixture] [--fresh]")
 
   /** a refresh every few seconds, as an event the tree permits (the ↻ button is on it) */
   private def ticks(every: Long): Source[Event] =
@@ -109,3 +110,23 @@ object Main:
         case Right((l, rest)) => async { println(l); System.out.flush() }.flatMap(_ => drain(rest))
       }
     drain(shared.serve(Layout.Wide())(Writer.of(up))).runWith
+
+  /**
+   * The real bot. TELEGRAM_BOT_TOKEN (from @BotFather) and NADIA_TELEGRAM_USERS — the
+   * Telegram user ids allowed in, comma-separated. With none, nobody is let in and every
+   * attempt is logged with its id: write to the bot once, read your id in the log.
+   */
+  private def telegram(shared: Shared): Unit =
+    import okay.http.Transports
+    import okay.telegram.Bot
+    val token = sys.env.get("TELEGRAM_BOT_TOKEN").filter(_.nonEmpty).getOrElse {
+      System.err.println("telegram: set TELEGRAM_BOT_TOKEN (from @BotFather)"); sys.exit(2)
+    }
+    val allowed = sys.env.getOrElse("NADIA_TELEGRAM_USERS", "").split(",").flatMap(_.trim.toLongOption).toSet
+    val log = (s: String) => System.err.println(s"[telegram] $s")
+    if allowed.isEmpty then log("NADIA_TELEGRAM_USERS is empty: nobody is let in; write to the bot and read your id below")
+    else log(s"serving users ${allowed.mkString(", ")}")
+    val bot = Bot(Transports.http(), token)
+    val chats = TelegramBot.chats(bot, shared, () => ticks(5000))
+    Async.run[Long, Pure](bot.serve(TelegramBot.handler(allowed, shared, chats, log),
+      onRefused = r => async(log(s"Bot API refused ${r.method}: ${r.code} ${r.description}")))).runWith: Unit
