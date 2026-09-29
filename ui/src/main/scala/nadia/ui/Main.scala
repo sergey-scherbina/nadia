@@ -23,9 +23,25 @@ object Main:
   def main(args: Array[String]): Unit =
     val mode = args.headOption.getOrElse("terminal")
     val fixture = args.contains("--fixture") || sys.env.get("ROZUM_MEETING_TOKEN").forall(_.isEmpty)
+    val env = (k: String) => sys.env.get(k).filter(_.nonEmpty)
+    // the agent sources beside the rooms' roster, each only when it is configured:
+    //   NADIA_SERVE_URL (default :8790 when NADIA_SERVE_TOKEN is set) + NADIA_SERVE_TOKEN,
+    //   ROZUM_CONTROL_URL (default :8411) + ROZUM_CONTROL_SESSION (the `rozum_sess` cookie)
+    // NADIA_WORKSPACES=<dir> names the directory whose subdirectories are the projects,
+    // so a new agent works in the project the operator picked
+    def sources: Vector[AgentSource] =
+      val nadia = (env("NADIA_SERVE_URL"), env("NADIA_SERVE_TOKEN")) match
+        case (None, None) => None
+        case (url, tok) =>
+          val root = env("NADIA_WORKSPACES")
+          Some(NadiaServe(url.getOrElse("http://127.0.0.1:8790"), tok.getOrElse(""),
+            p => root.map(r => java.nio.file.Path.of(r, p).toString)))
+      val control = env("ROZUM_CONTROL_SESSION").map(sess =>
+        ControlApi(env("ROZUM_CONTROL_URL").getOrElse("http://127.0.0.1:8411"), sess))
+      (nadia ++ control).toVector
     val feed: WorldFeed =
       if fixture then InMemory()
-      else Rozum(sys.env.getOrElse("ROZUM_MEETING_BASE", "http://127.0.0.1:8401"), sys.env("ROZUM_MEETING_TOKEN"))
+      else Rozum(env("ROZUM_MEETING_BASE").getOrElse("http://127.0.0.1:8401"), sys.env("ROZUM_MEETING_TOKEN"), sources)
     // ONE session on disk, whichever host opens it: quit the terminal, open the
     // chat, the draft and the room are there. `--fresh` starts it over.
     val journalPath = sys.env.get("NADIA_UI_JOURNAL").map(java.nio.file.Path.of(_)).getOrElse {

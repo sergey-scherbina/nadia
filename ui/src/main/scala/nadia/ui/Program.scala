@@ -41,6 +41,7 @@ object Program:
         rooms(s),
         Text("Agents", emphasis),
         Items(s.world.agents.map(a => Button(s"${a.display} · ${a.state} · ${a.project}", a.key)), "agents"),
+        spawnForm(s),
         Button("↻", "refresh")))
       case Some(_) => Column(Vector(page(s, layout.window), Button("← rooms", "rooms")))
 
@@ -68,7 +69,33 @@ object Program:
         Column(Vector(
           Button(s"${if here then "▶ " else ""}${a.display}", a.key, if here then Role.Active else Role.Plain),
           Text(s"${a.state} · ${a.project}", muted)))
-      }, "agents")))
+      }, "agents"),
+      Text(""),
+      spawnForm(s)))
+
+  /** "start a nadia agent on a task, in a project" — shown only where a feed can
+   * start one is the feed's business; the form is always the same */
+  private def spawnForm(s: Workspace): Ui =
+    val projects = s.world.rooms.map(_.project).distinct
+    if projects.isEmpty then Text("")
+    else Form(Vector(
+      Input(s.spawnTask, "spawn.task", "New agent: task", InputKind.Text, live = true),
+      Select(projects, math.min(s.spawnProject, projects.length - 1), "spawn.project")), "Start", "spawn")
+
+  /** one agent: what it is, what it is doing, and exactly the commands it takes */
+  private def agentHead(a: Agent, room: Option[Room]): Ui =
+    val buttons = Vector(
+      Option.when(a.caps(Cap.Pause))(Button("⏸ pause", "agent.pause")),
+      Option.when(a.caps(Cap.Resume))(Button("▶ resume", "agent.resume")),
+      Option.when(a.caps(Cap.Stop))(Button("■ stop", "agent.stop", Role.Danger))).flatten
+    Column(Vector(
+      Text(a.display, bold),
+      Text(s"${a.kind} · ${a.state} · ${a.project}", muted)) ++
+      Option.when(a.detail.nonEmpty)(Text(a.detail)).toVector ++
+      Option.when(a.result.nonEmpty)(Text(s"→ ${a.result}", emphasis)).toVector ++
+      Option.when(buttons.nonEmpty)(Row(buttons)).toVector :+
+      Text(if a.caps(Cap.Tell) then s"the composer tells ${a.display} directly"
+           else room.fold("no room")(r => s"speaks in ${r.title}"), muted))
 
   /** the focused item — a room's transcript, or an agent's card — and the composer under it */
   private def page(s: Workspace, window: Int): Ui = s.focus match
@@ -77,11 +104,10 @@ object Program:
       val ctx = s.context(key)
       val room = s.roomOf(key)
       val head = s.world.agent(key) match
-        case Some(a) => Column(Vector(
-          Text(a.display, bold),
-          Text(s"${a.kind} · ${a.state} · ${a.project}", muted),
-          Text(room.fold("no room")(r => s"speaks in ${r.title}"), muted)))
+        case Some(a) => agentHead(a, room)
         case None => Text(room.fold(key)(_.title), bold)
+      val typing = room.map(_.responding).filter(_.nonEmpty)
+        .map(ws => Text(s"✎ ${ws.mkString(", ")} ${if ws.size == 1 then "is" else "are"} typing…", muted))
       val all = room.map(r => s.world.transcript(r.key)).getOrElse(Vector.empty)
       val shown = slice(all, ctx.anchor, window)
       val lines = if shown.isEmpty then Vector(Text("— nothing yet —", muted))
@@ -90,7 +116,7 @@ object Program:
       val newer = ctx.anchor >= 0
       Column(Vector(
         head,
-        Scroll(Column(lines), "transcript"),
+        Scroll(Column(lines ++ typing.toVector), "transcript"),
         // a paging button is on the tree only when it can do something: the
         // tree is the capability list, so an absent button is a refused press
         Row(Vector(
@@ -98,7 +124,8 @@ object Program:
           if newer then Button("↓ newer", "newer") else Text(""))),
         Form(Vector(Input(ctx.draft, "compose",
           if ctx.addressee.isEmpty then "Message" else s"To ${ctx.addressee}",
-          InputKind.Multiline, live = true)), "Send", "send")))
+          InputKind.Multiline, live = true)),
+          if s.world.agent(key).exists(_.caps(Cap.Tell)) then "Tell" else "Send", "send")))
 
   /** `window` messages from `anchor` (the n at the top), or the tail when anchor < 0 */
   def slice(all: Vector[Msg], anchor: Int, window: Int): Vector[Msg] =
@@ -137,6 +164,13 @@ object Program:
       } }
     case Event.Pressed("send") => sent(feed, s)
     case Event.Submitted("send", edits) => sent(feed, edits.foldLeft(s)(update(feed)))
+    case Event.Pressed("agent.pause") => command(feed, s, AgentCmd.Pause, Cap.Pause)
+    case Event.Pressed("agent.resume") => command(feed, s, AgentCmd.Resume, Cap.Resume)
+    case Event.Pressed("agent.stop") => command(feed, s, AgentCmd.Stop, Cap.Stop)
+    case Event.Edited("spawn.task", v) => s.copy(spawnTask = v)
+    case Event.Chosen("spawn.project", i) => s.copy(spawnProject = i)
+    case Event.Pressed("spawn") => spawned(feed, s)
+    case Event.Submitted("spawn", edits) => spawned(feed, edits.foldLeft(s)(update(feed)))
     case _ => s
 
   /** the window `older`/`newer` step by — the largest layout's, so a chat and a
@@ -162,17 +196,44 @@ object Program:
       s2.withContext(k)(c => c.copy(seen = if c.anchor < 0 then math.max(c.seen, last) else c.seen, addressee = addressee))
     }
 
+  /** a command for the focused agent — only one its caps promise: the buttons are
+   * drawn from the caps, and a stale press (the agent moved on) is a notice, not a call */
+  private def command(feed: WorldFeed, s: Workspace, cmd: AgentCmd, cap: Cap): Workspace =
+    s.focus.flatMap(s.world.agent) match
+      case Some(a) if a.caps(cap) =>
+        feed.act(a, cmd) match
+          case Left(err) => s.copy(notice = err)
+          case Right(()) => refreshed(feed, s.copy(notice = s"${a.display}: ${cmd.toString.toLowerCase}"))
+      case Some(a) => s.copy(notice = s"${a.display} cannot ${cmd.toString.toLowerCase} now")
+      case None => s
+
+  private def spawned(feed: WorldFeed, s: Workspace): Workspace =
+    val task = s.spawnTask.trim
+    val projects = s.world.rooms.map(_.project).distinct
+    if task.isEmpty then s.copy(notice = "a new agent needs a task")
+    else projects.lift(s.spawnProject) match
+      case None => s.copy(notice = "no project to start it in")
+      case Some(p) => feed.spawn(task, p) match
+        case Left(err) => s.copy(notice = err)
+        case Right(()) => refreshed(feed, s.copy(spawnTask = "", notice = s"started in $p: $task"))
+
   private def sent(feed: WorldFeed, s: Workspace): Workspace = s.focus.fold(s) { k =>
     val ctx = s.context(k)
     val text = ctx.draft.trim
     if text.isEmpty then s.copy(notice = "nothing to send")
-    else s.roomOf(k) match
-      case None => s.copy(notice = "no room to speak in")
-      case Some(r) =>
-        val line = if ctx.addressee.isEmpty then text else s"@${ctx.addressee} $text"
-        feed.post(r, line) match
+    else s.world.agent(k).filter(_.caps(Cap.Tell)) match
+      case Some(a) =>
+        // an agent with its own inbox is TOLD, not mentioned in a room it may not read
+        feed.act(a, AgentCmd.Tell(text)) match
           case Left(err) => s.copy(notice = err)
-          case Right(()) =>
-            val s2 = s.withContext(k)(_.copy(draft = "", anchor = -1)).copy(notice = s"sent to ${r.title}")
-            refreshed(feed, s2)
+          case Right(()) => refreshed(feed, s.withContext(k)(_.copy(draft = "")).copy(notice = s"told ${a.display}"))
+      case None => s.roomOf(k) match
+        case None => s.copy(notice = "no room to speak in")
+        case Some(r) =>
+          val line = if ctx.addressee.isEmpty then text else s"@${ctx.addressee} $text"
+          feed.post(r, line) match
+            case Left(err) => s.copy(notice = err)
+            case Right(()) =>
+              val s2 = s.withContext(k)(_.copy(draft = "", anchor = -1)).copy(notice = s"sent to ${r.title}")
+              refreshed(feed, s2)
   }

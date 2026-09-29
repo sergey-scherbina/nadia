@@ -252,3 +252,82 @@ class SharedTest extends munit.FunSuite:
     assertEquals(back.state.context(rozum).draft, "on disk")
     assertEquals(Journal.file(path).lines.size, 3)
   }
+
+/** S4: agents from every source, commanded by exactly what each can do */
+class AgentsTest extends munit.FunSuite:
+  val nadia7 = "agent.nadia-7"; val codex = "agent.codex-2"; val raven = "agent.claude-1"
+  def fresh: (InMemory, Workspace) =
+    val f = InMemory()
+    (f, Program.update(f)(Workspace(), Event.Pressed("refresh")))
+  def buttons(ui: Ui): Set[String] = Ui.keys(ui)
+  val commands = Set("agent.pause", "agent.resume", "agent.stop")
+  def commandsOn(ui: Ui): Set[String] = buttons(ui).intersect(commands)
+  def text(ui: Ui): String = Frame.render(ui, None, width = 120).mkString("\n")
+
+  test("S4 — an agent's page shows exactly the commands its source gives it") {
+    val (f, init) = fresh
+    val step = Program.update(f)
+    val onNadia = Program.view(Layout.Wide())(step(init, Event.Pressed(nadia7)))
+    assert(Set("agent.pause", "agent.stop").subsetOf(buttons(onNadia)), buttons(onNadia).toString)
+    assert(!buttons(onNadia)("agent.resume"))
+    assert(text(onNadia).contains("[bash] sbt test"), text(onNadia))
+    val onCodex = Program.view(Layout.Wide())(step(init, Event.Pressed(codex)))
+    assert(buttons(onCodex)("agent.stop") && !buttons(onCodex)("agent.pause"))
+    val onRaven = Program.view(Layout.Wide())(step(init, Event.Pressed(raven)))
+    assertEquals(commandsOn(onRaven), Set.empty[String])
+    // the room agent is TYPING, and the room says so
+    assert(text(onRaven).contains("nimble-raven is typing"), text(onRaven))
+  }
+
+  test("S4 — pause, resume, stop: the caps move with the state, and a stale press is refused") {
+    val (f, init) = fresh
+    val step = Program.update(f)
+    val paused = Seq(Event.Pressed(nadia7), Event.Pressed("agent.pause")).foldLeft(init)(step)
+    assertEquals(paused.world.agent(nadia7).map(_.state), Some("paused"))
+    val ui = Program.view(Layout.Wide())(paused)
+    assert(buttons(ui)("agent.resume") && !buttons(ui)("agent.pause"))
+    // pause again: the agent cannot, so nothing is called and a notice says so
+    val again = step(paused, Event.Pressed("agent.pause"))
+    assert(again.notice.contains("cannot pause"), again.notice)
+    val stopped = Seq(Event.Pressed("agent.resume"), Event.Pressed("agent.stop")).foldLeft(paused)(step)
+    assertEquals(stopped.world.agent(nadia7).map(_.state), Some("stopping"))
+    assertEquals(commandsOn(Program.view(Layout.Wide())(stopped)), Set.empty[String])
+  }
+
+  test("S4 — the composer TELLS an agent with an inbox, and MENTIONS one in a room") {
+    val (f, init) = fresh
+    val step = Program.update(f)
+    val told = Seq(Event.Pressed(nadia7), Event.Edited("compose", "also run the contract cases"),
+                   Event.Pressed("send")).foldLeft(init)(step)
+    assertEquals(f.told("nadia-7"), Vector("also run the contract cases"))
+    assertEquals(told.context(nadia7).draft, "")
+    assert(!f.posted(Room("nadia", "nadia")).exists(_.text.contains("contract cases")))
+    Seq(Event.Pressed(raven), Event.Edited("compose", "status?"), Event.Pressed("send")).foldLeft(told)(step)
+    assertEquals(f.posted(Room("rozum", "rozum")).last.text, "@nimble-raven status?")
+  }
+
+  test("S4 — start an agent from the form: task and project, then it is in the panel") {
+    val (f, init) = fresh
+    val step = Program.update(f)
+    val empty = step(init, Event.Submitted("spawn", Vector.empty))
+    assert(empty.notice.contains("needs a task"), empty.notice)
+    val s = step(init, Event.Submitted("spawn", Vector(Event.Edited("spawn.task", "fix the flaky test"),
+                                                        Event.Chosen("spawn.project", 2))))
+    val started = s.world.agents.find(_.detail == "fix the flaky test")
+    assertEquals(started.map(_.project), Some("okay"))
+    assertEquals(s.spawnTask, "")
+    assert(text(Program.view(Layout.Wide())(s)).contains(started.get.display))
+  }
+
+  test("S4 — a recovery replays commands without sending them again") {
+    val world = InMemory()
+    val journal = Journal.memory()
+    val live = Shared(world, journal)
+    Seq(Event.Pressed(nadia7), Event.Edited("compose", "once"), Event.Pressed("send"),
+        Event.Pressed("agent.pause"),
+        Event.Submitted("spawn", Vector(Event.Edited("spawn.task", "one"), Event.Chosen("spawn.project", 0))))
+      .foreach(live.apply)
+    val before = (world.told, world.world(None).agents.size)
+    Shared(world, journal)
+    assertEquals((world.told, world.world(None).agents.size), before)
+  }

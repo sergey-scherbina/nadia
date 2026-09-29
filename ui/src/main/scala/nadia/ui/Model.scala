@@ -15,14 +15,41 @@ package nadia.ui
  * `agent.<id>`; every button that names an item carries the item's key, so an
  * `Event.Pressed(key)` IS the item, with no lookup table beside the tree.
  */
-final case class Room(project: String, name: String, last: String = "", mentions: Int = 0):
+final case class Room(project: String, name: String, last: String = "", mentions: Int = 0,
+                      /** who is composing a reply right now (the daemon's `responding`) */
+                      responding: Vector[String] = Vector.empty):
   def key: String = s"room.$project.$name"
   def title: String = if project == name then name else s"$project/$name"
 
 final case class Msg(n: Int, who: String, text: String, time: String = "")
 
-final case class Agent(id: String, display: String, project: String, kind: String, state: String):
+/**
+ * One agent, whichever source knows it (rozum:docs/specs/okay-workspace-ui.md, S4):
+ *
+ *  - `room`   — an agent that said `rozum meetings hello` (Claude Code, codex…): it lives in
+ *               a meeting room, and the only way to reach it is to speak there, addressed;
+ *  - `ucc`    — a model participant or a coder the control API launched: it can be stopped;
+ *  - `nadia`  — a nadia agent under `nadia serve`: it has its own inbox (`tell`) and can be
+ *               paused, resumed and stopped, and it reports its last tool and its result.
+ *
+ * What an agent CAN do is data (`caps`), so the view shows exactly the buttons that act —
+ * and the tree being the capability list, a press on one it did not show is refused.
+ */
+enum Cap:
+  case Tell, Pause, Resume, Stop
+
+final case class Agent(id: String, display: String, project: String, kind: String, state: String,
+                       source: String = "room", caps: Set[Cap] = Set.empty,
+                       /** what it is doing, in one line — `[bash] cargo check`, a task */
+                       detail: String = "",
+                       /** its answer, once it has one */
+                       result: String = ""):
   def key: String = s"agent.$id"
+
+/** what the workspace can ask of an agent */
+enum AgentCmd:
+  case Tell(text: String)
+  case Pause, Resume, Stop
 
 final case class World(rooms: Vector[Room] = Vector.empty,
                        agents: Vector[Agent] = Vector.empty,
@@ -45,7 +72,10 @@ final case class Workspace(world: World = World(),
                            focus: Option[String] = None,
                            contexts: Map[String, Context] = Map.empty,
                            notice: String = "",
-                           quit: Boolean = false):
+                           quit: Boolean = false,
+                           /** the "new agent" form: its task, and which project it works in */
+                           spawnTask: String = "",
+                           spawnProject: Int = 0):
   def context(key: String): Context = contexts.getOrElse(key, Context())
   def focused: Context = focus.map(context).getOrElse(Context())
   def withContext(key: String)(f: Context => Context): Workspace =
