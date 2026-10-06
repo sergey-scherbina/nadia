@@ -22,12 +22,40 @@ object Gateway:
 
   val DefaultUrl = "http://127.0.0.1:8080/v1"
 
+  /** The gateway's URL: what the environment says, else what rozum itself says it is running,
+    * else the historical default. Measured 2026-10-06: the shared gateway on this machine sat on
+    * 8089 while every nadia defaulted to 8080 and reported "no gateway" — a wrong port is the one
+    * failure that looks exactly like an absent server, and rozum already knows the right answer
+    * (`rozum gateway status --json`, `gateway.port`), so nobody should have to be told it.
+    */
   def urlFromEnv(): String =
     sys.env
       .get("OPENAI_BASE_URL")
       .orElse(sys.env.get("ROZUM_GATEWAY_URL"))
       .map(Endpoint.withV1)
+      .orElse(discover())
       .getOrElse(DefaultUrl)
+
+  /** Ask rozum where its gateway is. None when rozum is absent, slow, or has no healthy gateway;
+    * never a throw — a missing CLI is the normal case in a container.
+    */
+  def discover(timeoutMs: Long = 3000): Option[String] =
+    Try {
+      val pb = ProcessBuilder("rozum", "gateway", "status", "--json").redirectErrorStream(false)
+      val proc = pb.start()
+      val out = new String(proc.getInputStream.readAllBytes(), "UTF-8")
+      if !proc.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) then { proc.destroyForcibly(); None }
+      else if proc.exitValue() != 0 then None
+      else portFromStatus(out).map(p => s"http://127.0.0.1:$p/v1")
+    }.toOption.flatten
+
+  /** The port in `rozum gateway status --json`, when the gateway there is healthy. Pure. */
+  def portFromStatus(json: String): Option[Int] =
+    Try {
+      val g = ujson.read(json)("gateway")
+      val healthy = Try(g("healthy").bool).getOrElse(true)
+      Try(g("port").num.toInt).toOption.filter(_ > 0).filter(_ => healthy)
+    }.toOption.flatten
 
   /** The gateway serves whichever model is resident, so a caller that does not care can
     * say so and let the server decide.

@@ -1,0 +1,19 @@
+#!/bin/sh
+# nadia-app — the okay implementation, as one command (docs/specs/app.md).
+#
+#   bin/nadia-app serve                 the fleet + the state log over the wire, for the workspace UI
+#   bin/nadia-app run "<task>" [DIR]    one agent to its end; exit 0 on Done with the check passed
+#
+# Builds on first use (sbt, once), then starts in a second: the classpath is
+# cached beside the build and refreshed when a source changes. No environment
+# is required — the gateway is found through `rozum gateway status`, the state
+# lives in ~/.nadia/app, the project is the current directory.
+set -eu
+root=$(cd "$(dirname "$0")/.." && pwd)
+cp_file="$root/app/target/nadia-app.classpath"
+newest=$(find "$root/app/src/main" "$root/scala/sdk" "$root/scala/rozum" "$root/scala/cloud" "$root/build.sbt" -type f -newer "$cp_file" 2>/dev/null | head -1 || true)
+if [ ! -s "$cp_file" ] || [ -n "$newest" ]; then
+  echo "nadia-app: building (first run, or a source changed)…" >&2
+  (cd "$root" && sbt -batch -error "app/compile" "export app/Runtime/fullClasspath" | tail -1 > "$cp_file")
+fi
+exec java -XX:+UseSerialGC -Xss4m -cp "$(cat "$cp_file")" nadia.Main "$@"

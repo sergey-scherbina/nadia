@@ -51,8 +51,16 @@ app/src/main/scala/nadia/
   Main.scala              `nadia-app serve`: the store, the fleet, the roster, the models seam,
                           the wire — wiring, nothing else
 app/src/test/scala/...    munit
+bin/nadia-app             one command: builds once, then `serve` or `run "<task>" [DIR]`
 ui/                       the workspace program and its hosts (its own build; NAD-14)
 ```
+
+**It just works, or it says why not** (operator, 2026-10-06: «делай всё, чтобы всё просто
+работало»). No environment is required: the gateway is the one `rozum gateway status` reports
+(measured the same day — the shared gateway sat on 8089 while nadia's default said 8080, and a wrong
+port is the one failure that looks exactly like an absent server), the state is `~/.nadia/app`, the
+project is the current directory, the owner is the console. Every variable in `Main`'s header is an
+override, never a requirement.
 
 The six tools, the sandbox, the prompt and the gate are the ones in `scala/rozum/` — the same
 policy, wrapped into an okay `Toolbox`. They are not rewritten; if they are reused verbatim the

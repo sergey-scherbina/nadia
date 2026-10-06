@@ -155,6 +155,22 @@ class VerifySuite extends munit.FunSuite:
     val dead = new ModelClient:
       def chat(m: List[ujson.Value], t: List[Tool], s: Sampling): Either[String, Turn] = Left("boom")
     assertEquals(Verify.deriveCheck(dead, """rpn calculator: `cargo run -- "3 4 + 2 *"` must print 14"""), None)
+  test("a null pass is Unknown, not a pass and not a fail — the judge saying it cannot tell") {
+    assert(Verify.parseVerdict("""{"pass": null, "reason": "nothing shown"}""").isInstanceOf[Verify.Verdict.Unknown])
+  }
+
+  test("workspaceSnapshot lists the files and shows the small ones; dot-files and target are skipped; an empty dir is None") {
+    val dir = java.nio.file.Files.createTempDirectory("verify-ws")
+    assertEquals(Verify.workspaceSnapshot(dir), None)
+    java.nio.file.Files.writeString(dir.resolve("hello.txt"), "hello")
+    java.nio.file.Files.createDirectories(dir.resolve("target"))
+    java.nio.file.Files.writeString(dir.resolve("target/big.bin"), "x" * 10)
+    java.nio.file.Files.writeString(dir.resolve(".secret"), "no")
+    val snap = Verify.workspaceSnapshot(dir).getOrElse(fail("a file is there"))
+    assert(snap.contains("hello.txt (5 bytes)"), snap)
+    assert(snap.contains("--- hello.txt ---\nhello"), snap)
+    assert(!snap.contains("target") && !snap.contains(".secret"), snap)
+  }
 
 /** The same rules, read from `contract/gate-cases.json` instead of retyped here.
   *
@@ -163,6 +179,7 @@ class VerifySuite extends munit.FunSuite:
   * time. This class reads the corpus all three implementations read, so a rule added once is
   * checked three times and a leg that drifts fails instead of quietly disagreeing (SPEC.md §3.1).
   */
+
 class ContractCorpusSuite extends munit.FunSuite:
   import upickle.default.*
 

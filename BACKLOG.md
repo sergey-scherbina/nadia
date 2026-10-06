@@ -370,3 +370,9 @@ exits 1 on a failed report (it exited 0, against SPEC §4.1). What to decide: wh
 should be asked about *the workspace* rather than *the code*, or whether a task with no code and no
 command is `checkable: false` for the judge too (SPEC §3.1's rule that `checkable: false` is a valid
 answer). Needs a measurement over the matrix's tasks before the prompt changes.
+
+**Changed the same day:** the judge is asked about the WORKSPACE, not the CODE — `Verify.judge`
+shows the Rust source where there is some and `workspaceSnapshot` (files with sizes, the small ones
+in full) otherwise, and may answer `pass: null` (Unknown) when it cannot tell. Re-run of the same
+class of task (`notes.md` with a heading and a bullet): 1 step, `✔ the model-judge confirmed the
+result`, 0 repair rounds. One task is not the matrix; the matrix measurement stays owed here.

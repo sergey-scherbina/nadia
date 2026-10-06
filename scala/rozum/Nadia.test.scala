@@ -55,6 +55,14 @@ class SandboxSuite extends munit.FunSuite:
 
 class GatewaySuite extends munit.FunSuite:
 
+  test("portFromStatus reads rozum's own answer; an unhealthy gateway or garbage is None") {
+    val status = """{"gateway":{"model":"m","port":8089,"pid":1,"healthy":true},"residency":{}}"""
+    assertEquals(Gateway.portFromStatus(status), Some(8089))
+    assertEquals(Gateway.portFromStatus(status.replace("true", "false")), None)
+    assertEquals(Gateway.portFromStatus("""{"gateway":{"model":"m"}}"""), None)
+    assertEquals(Gateway.portFromStatus("not json"), None)
+  }
+
   test("one model, several spellings") {
     // rozum launches with `org:repo`; the Hub writes `org/repo`; both name one set of
     // weights. Comparing them as strings is the defect this mirrors from the gateway's own

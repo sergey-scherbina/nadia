@@ -299,18 +299,24 @@ object Verify:
 
   /** Semantic judgement where nothing deterministic exists. Unknown is not a pass. */
   def judge(client: ModelClient, task: String, cwd: Path): Verdict =
-    val code = sourceSnapshot(cwd).getOrElse("(no source found)")
+    // what the agent left behind — the source where there is some, the files otherwise. Measured
+    // 2026-10-06 (nadia NAD-22): a judge shown "(no source found)" for a task that asked for one text
+    // file answered "the code is missing"; it was asked about code, and there was none to ask about.
+    val workspace = sourceSnapshot(cwd).orElse(workspaceSnapshot(cwd)).getOrElse("(an empty workspace)")
     val prompt =
-      s"""You are a strict code reviewer judging whether the CODE accomplishes the TASK. Reply with
-         |ONLY a JSON object, no prose: {"pass": <true|false>, "reason": "<one short sentence>"}.
-         |Rule pass=false ONLY if the code clearly fails a STATED requirement of the task; if it
-         |plausibly satisfies the task, pass=true. Do not invent requirements the task did not state.
+      s"""You are a strict reviewer judging whether the WORKSPACE, as the agent left it, accomplishes
+         |the TASK. Reply with ONLY a JSON object, no prose:
+         |{"pass": <true|false|null>, "reason": "<one short sentence>"}.
+         |pass=false ONLY if the workspace clearly fails a STATED requirement of the task; pass=true if
+         |it plausibly satisfies the task; pass=null if what is shown is not enough to tell. The task
+         |may ask for files, text or configuration rather than code — judge what it asked for. Do not
+         |invent requirements the task did not state.
          |
          |TASK:
          |$task
          |
-         |CODE:
-         |$code""".stripMargin
+         |WORKSPACE:
+         |$workspace""".stripMargin
     ask(client, prompt, 200) match
       case Some(text) => parseVerdict(text)
       case None       => Verdict.Unknown("model-judge unavailable or timed out")
@@ -326,6 +332,30 @@ object Verify:
           case Some(true) => Verdict.Pass
           case None       => Verdict.Unknown("model-judge response has no boolean `pass` field")
       case None => Verdict.Unknown("model-judge response is not valid verdict JSON")
+
+  /** The workspace as files, for a task that is not a Rust project: every regular file (dot-files,
+    * `target` and `node_modules` skipped) with its size, and the text of the small ones, within a
+    * byte budget — enough for a judge to see whether what was asked for is there.
+    */
+  def workspaceSnapshot(cwd: Path, maxFiles: Int = 40, maxBytes: Int = 6144): Option[String] =
+    val files = scala.util
+      .Try(Files.walk(cwd, 4).iterator.asScala.toList)
+      .getOrElse(Nil)
+      .filter(p => Files.isRegularFile(p))
+      .map(p => (cwd.relativize(p).toString, p))
+      .filterNot((rel, _) => rel.split('/').exists(seg => seg.startsWith(".") || seg == "target" || seg == "node_modules"))
+      .sortBy(_._1)
+    if files.isEmpty then None
+    else
+      val listing = files.take(maxFiles).map((rel, p) => s"$rel (${scala.util.Try(Files.size(p)).getOrElse(0L)} bytes)")
+      val more = if files.length > maxFiles then List(s"… and ${files.length - maxFiles} more") else Nil
+      var budget = maxBytes
+      val bodies = files.take(maxFiles).flatMap { (rel, p) =>
+        val size = scala.util.Try(Files.size(p)).getOrElse(Long.MaxValue)
+        if size > budget || size > 2048 then None
+        else scala.util.Try(Files.readString(p)).toOption.map { body => budget -= size.toInt; s"--- $rel ---\n$body" }
+      }
+      Some(("FILES:" :: (listing ++ more)).mkString("\n") + (if bodies.isEmpty then "" else "\n\n" + bodies.mkString("\n\n")))
 
   /** The workspace's own source, for a reader that cannot run anything. */
   def sourceSnapshot(cwd: Path, maxBytes: Int = 8192): Option[String] =
