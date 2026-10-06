@@ -107,7 +107,9 @@ object Main:
         r.report.foreach(j => Console.err.println(s"nadia-app: ${okay.codec.Json.print(j)}"))
         Console.err.println(s"nadia-app: #${r.id.n} ${r.phase} after ${r.step} steps")
       }
-      sys.exit(if st.exists(_.phase == Phase.Done) then 0 else 1)
+      // SPEC §4.1 / §3.1: a failed check means the task is not done, whatever the model says
+      val checkFailed = st.exists(_.report.exists(j => okay.codec.Json.print(j).contains("\"passed\":false")))
+      sys.exit(if st.exists(_.phase == Phase.Done) && !checkFailed then 0 else 1)
     case _ =>
       Console.err.println("usage: nadia-app serve | nadia-app run \"<task>\" [DIR]")
       sys.exit(2)

@@ -357,3 +357,16 @@ with a `by` principal checked against the roster; a refusal is a record.
 
 `Ctx.ask(step, call)` parks the runner until an `approve`; `asked` records; `Status.asking`;
 `Control.Approve`. The REPL's `y/n/a` (SPEC §3.3) answered from any host.
+
+### NAD-22 — the model-judge rejects a finished no-code task
+
+Measured 2026-10-06, the first live run of `nadia-app run` against the shared rozum gateway
+(Qwen3.5-4B, port 8089): task "create a file hello.txt containing exactly the word hello"; the
+agent did it in 5 steps and the file is right. The task has no machine-checkable criterion, so the
+gate fell to the semantic judge (`scala/sdk/Verify.judge`), which ruled *"NOT accomplished: The code
+is missing, so it cannot create the required file"* — twice, through both repair rounds. The judge's
+prompt reads a task as a programming task; a file-system task has no code to find. `Main run` now
+exits 1 on a failed report (it exited 0, against SPEC §4.1). What to decide: whether the judge
+should be asked about *the workspace* rather than *the code*, or whether a task with no code and no
+command is `checkable: false` for the judge too (SPEC §3.1's rule that `checkable: false` is a valid
+answer). Needs a measurement over the matrix's tasks before the prompt changes.
