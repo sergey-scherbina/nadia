@@ -20,34 +20,61 @@ import scala.util.Try
   */
 object Gateway:
 
-  val DefaultUrl = "http://127.0.0.1:8080/v1"
-
-  /** The gateway's URL: what the environment says, else what rozum itself says it is running,
-    * else the historical default. Measured 2026-10-06: the shared gateway on this machine sat on
-    * 8089 while every nadia defaulted to 8080 and reported "no gateway" — a wrong port is the one
-    * failure that looks exactly like an absent server, and rozum already knows the right answer
-    * (`rozum gateway status --json`, `gateway.port`), so nobody should have to be told it.
+  /** rozum's `DEFAULT_GATEWAY_PORT`. Reached only where no rozum CLI answers (a container); with
+    * one, rozum says where its gateway is. This was `:8080` while the gateway lived on `:8089`.
     */
-  def urlFromEnv(): String =
-    sys.env
-      .get("OPENAI_BASE_URL")
-      .orElse(sys.env.get("ROZUM_GATEWAY_URL"))
-      .map(Endpoint.withV1)
-      .orElse(discover())
-      .getOrElse(DefaultUrl)
+  val DefaultUrl = "http://127.0.0.1:8089/v1"
 
-  /** Ask rozum where its gateway is. None when rozum is absent, slow, or has no healthy gateway;
-    * never a throw — a missing CLI is the normal case in a container.
+  /** The gateway's URL: what the environment says, else what rozum finds or starts, else the
+    * default. Measured 2026-10-06: the shared gateway on this machine sat on 8089 while every
+    * nadia defaulted to 8080 and reported "no gateway" — a wrong port is the one failure that
+    * looks exactly like an absent server, and rozum already knows the right answer, so nobody
+    * should have to be told it. Since 2026-10-08 rozum also STARTS it when nothing answers
+    * (`rozum:docs/specs/gateway-ensure.md`) — so call this only where a local model is used.
     */
-  def discover(timeoutMs: Long = 3000): Option[String] =
+  def urlFromEnv(): String = explicit().orElse(discover()).getOrElse(DefaultUrl)
+
+  /** The URL the environment names, if it names one. */
+  def explicit(): Option[String] =
+    sys.env.get("OPENAI_BASE_URL").orElse(sys.env.get("ROZUM_GATEWAY_URL")).map(Endpoint.withV1)
+
+  /** Ask rozum: `gateway ensure` (find, or start through launchd or a spawned daemon), else, for
+    * a rozum that predates it, `gateway status`. None when rozum is absent or has no gateway to
+    * give; never a throw — a missing CLI is the normal case in a container.
+    */
+  def discover(): Option[String] = ensure().orElse(status())
+
+  /** `rozum gateway ensure --json`. Up to 330 s: a gateway it starts loads its weights first. When
+    * rozum answers that it could not start one, that reason is the one worth reading, so it is
+    * printed rather than swallowed.
+    */
+  def ensure(timeoutMs: Long = 330000): Option[String] =
+    rozum(List("gateway", "ensure", "--json"), timeoutMs).flatMap {
+      case (0, out, _)   => urlFromEnsure(out)
+      case (1, _, err)   => { Console.err.println(s"nadia: ${err.trim}"); None }
+      case _             => None // an older rozum: no such subcommand
+    }
+
+  /** `rozum gateway status --json`: the port of a healthy gateway, starting nothing. */
+  def status(timeoutMs: Long = 3000): Option[String] =
+    rozum(List("gateway", "status", "--json"), timeoutMs).flatMap {
+      case (0, out, _) => portFromStatus(out).map(p => s"http://127.0.0.1:$p/v1")
+      case _           => None
+    }
+
+  private def rozum(args: List[String], timeoutMs: Long): Option[(Int, String, String)] =
     Try {
-      val pb = ProcessBuilder("rozum", "gateway", "status", "--json").redirectErrorStream(false)
-      val proc = pb.start()
+      val proc = ProcessBuilder(("rozum" :: args)*).start()
+      val err = new StringBuilder
+      val errReader = Thread.ofVirtual().start(() => err.append(new String(proc.getErrorStream.readAllBytes(), "UTF-8")))
       val out = new String(proc.getInputStream.readAllBytes(), "UTF-8")
       if !proc.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS) then { proc.destroyForcibly(); None }
-      else if proc.exitValue() != 0 then None
-      else portFromStatus(out).map(p => s"http://127.0.0.1:$p/v1")
+      else { errReader.join(); Some((proc.exitValue(), out, err.toString)) }
     }.toOption.flatten
+
+  /** The `/v1` URL in `rozum gateway ensure --json`. Pure. */
+  def urlFromEnsure(json: String): Option[String] =
+    Try(ujson.read(json)("url").str).toOption.filter(_.startsWith("http")).map(Endpoint.withV1)
 
   /** The port in `rozum gateway status --json`, when the gateway there is healthy. Pure. */
   def portFromStatus(json: String): Option[Int] =
@@ -120,8 +147,8 @@ object Gateway:
     residentModel(baseUrl).filterNot(sameModel(_, wanted)).map { resident =>
       s"""warning — this gateway has `$resident` resident, not `$wanted`.
          |  It will serve `$wanted` only if those weights are already downloaded; otherwise it
-         |  answers with `$resident` and labels the reply `$wanted`. To be sure, run a gateway on it:
-         |      rozum gateway --model ${rozumSpec(wanted)} --port 8080""".stripMargin
+         |  answers with `$resident` and labels the reply `$wanted`. To be sure, switch the gateway to it:
+         |      rozum gateway switch --model ${rozumSpec(wanted)}""".stripMargin
     }
 
   /** rozum launches with `org:repo`; the Hub writes `org/repo`. Same repository. */

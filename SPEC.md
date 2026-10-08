@@ -526,6 +526,17 @@ rediscover:
    gateway asked for a model it lacks answers with the one it has and labels the
    reply with the one requested, which is the only failure here invisible in the
    output.
+7. **The local gateway is found, never assumed.** With no URL named (`--gateway`,
+   `OPENAI_BASE_URL`, `ROZUM_GATEWAY_URL`), an implementation MUST ask rozum —
+   `rozum gateway ensure --json`, or the Rust library behind it — and use the `url`
+   it answers. That call finds the gateway (its registry, else the default port) and
+   STARTS one when none answers (launchd's job where installed, else a detached
+   daemon; `rozum:docs/specs/gateway-ensure.md`), so it MUST be made only by the
+   modes that talk to a local model — not by `help`, `mcp list`, a strict replay, or
+   a hosted provider. An implementation MUST NOT keep a default port of its own
+   beyond rozum's (`8089`), for a machine with no rozum CLI: one of three did, as
+   `8080`, and reported "no gateway" beside one running (2026-10-06, again
+   2026-10-08).
 
 **Where the agent runs.** A container image is the portable unit; batch mode's
 exit codes (§4.1) are what makes it a Kubernetes `Job` rather than a Deployment.

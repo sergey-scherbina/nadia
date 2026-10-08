@@ -1,5 +1,28 @@
 # Changelog
 
+## gateway-ensure — the gateway is found or started through rozum, in all three
+2026-10-08
+
+The operator started nadia and it reported no gateway beside one running on `:8089`: the Rust nadia
+(in rozum) still defaulted to `:8080`. The Scala one had been fixed on 2026-10-06 by asking `rozum
+gateway status`; the ScalaScript one never was. The same mismatch, found twice, in a different
+implementation each time — so it is a contract now, `SPEC.md` §8 rule 7: with no URL named, ask
+`rozum gateway ensure --json` (rozum's `docs/specs/gateway-ensure.md`), which finds the shared gateway
+or STARTS it — through launchd's `com.rozum.gateway` where installed, else as a daemon — and use the
+`url` it answers; only in the modes that talk to a local model; no default port but rozum's `:8089`.
+
+- Scala (`scala/rozum/Gateway.scala`): `ensure`, then `status` for an older rozum, then `:8089`; a
+  failure to start is printed with rozum's reason. `scala/Main.scala` resolves it only for `run`/`chat`
+  on a locally served model — `mcp list` and a hosted provider start nothing. The mismatch warning
+  names `rozum gateway switch`, not a second gateway on `:8080`.
+- ScalaScript (`src/nadia.ssc`): the same through `exec`; the endpoint is made by `run` and `chat`,
+  not at the top of the program.
+- Rust: in rozum, in-process.
+
+Verified: `scala-cli test scala` green (GatewaySuite 6, 2 new); with a stub `rozum` that logs its
+calls, `help` and `mcp list` call it 0 times and `chat` once (`gateway ensure --json`), in both the
+ScalaScript and the Scala nadia; against the real gateway the ScalaScript chat starts on it.
+
 ## contract-corpus — one contract, read three times instead of ported by hand
 2026-08-13
 

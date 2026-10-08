@@ -20,6 +20,8 @@ policy, and the interface.
 [exists](std/fs.ssc)
 [isFileSafe, textOr](fsx.ssc)
 [args, env, envOrElse, cwd, exit, readLine](std/os.ssc)
+[exec, ProcessOptions, ProcessResult](std/process.ssc)
+[jsonValue](std/json.ssc)
 
 ```scalascript
 /** What the model is told before anything else.
@@ -68,7 +70,22 @@ def defaultGateway(): String =
     case None =>
       env("ROZUM_GATEWAY_URL") match
         case Some(u) => bareOrigin(u)
-        case None    => "http://127.0.0.1:8080"
+        case None    => ensuredGateway()
+
+/** rozum's shared gateway, found or STARTED (`rozum gateway ensure`, `rozum:docs/specs/gateway-ensure.md`)
+  * — so called only by the modes that talk to a model. The fallback is rozum's default port, for a
+  * machine with no rozum CLI; it was `:8080` while the gateway lived on `:8089`, and a wrong port
+  * is the one failure that looks exactly like an absent server. When rozum says it could not start
+  * one, its reason is printed: that is the line worth reading. */
+def ensuredGateway(): String =
+  val fallback = "http://127.0.0.1:8089"
+  val r = exec("sh", List("-c", "rozum gateway ensure --json"), ProcessOptions())
+  if r.exitCode == 0 then
+    val u = jsonValue(r.stdout).get("url").asString
+    if u.startsWith("http") then bareOrigin(u) else fallback
+  else
+    if r.exitCode == 1 then println("nadia: " + r.stderr.trim())
+    fallback
 
 val usage =
   "nadia — a coding agent on a local model\n" +
@@ -258,7 +275,9 @@ val mode = if argv.length == 0 then "chat" else argv(0)
 val root = cwd
 val sb = Sandbox(root)
 val model = envOrElse("NADIA_MODEL", "local")
-val endpoint = AgentEndpoint(defaultGateway())
+// Resolved by the modes that talk to a model, not here: finding the gateway may START one, which
+// `help` and `mcp list` must not do.
+def endpointNow(): AgentEndpoint = AgentEndpoint(defaultGateway())
 val maxSteps = 24
 
 // `nadia help` is the same answer as `-h`. A user who guesses the word everybody guesses
@@ -271,13 +290,14 @@ else if mode == "mcp" then
     exit(2)
   else mcpList(flags, root)
 else if mode == "chat" then
-  repl(sb, endpoint, model, maxSteps, connectRequested(flags, root))
+  repl(sb, endpointNow(), model, maxSteps, connectRequested(flags, root))
 else if mode == "run" then
   if argv.length < 2 then
     println("nadia run needs a task\n\n" + usage)
     exit(2)
   else
     val task = argv.drop(1).mkString(" ")
+    val endpoint = endpointNow()
     val mcpTools = connectRequested(flags, root)
     // What "done" means, decided BEFORE the run so the run cannot influence it (SPEC §3.1).
     val check = gateCheckFor(endpoint, model, task, sb.root)

@@ -63,6 +63,17 @@ class GatewaySuite extends munit.FunSuite:
     assertEquals(Gateway.portFromStatus("not json"), None)
   }
 
+  test("urlFromEnsure reads rozum's `gateway ensure --json`, as a /v1 URL; garbage is None") {
+    val ensure = """{"url":"http://127.0.0.1:8089","port":8089,"model":"m","pid":917,"how":"running","resident":false}"""
+    assertEquals(Gateway.urlFromEnsure(ensure), Some("http://127.0.0.1:8089/v1"))
+    assertEquals(Gateway.urlFromEnsure("""{"port":8089}"""), None)
+    assertEquals(Gateway.urlFromEnsure("not json"), None)
+  }
+
+  test("the fallback is rozum's default port, not 8080") {
+    assert(Gateway.DefaultUrl.contains(":8089/"), Gateway.DefaultUrl)
+  }
+
   test("one model, several spellings") {
     // rozum launches with `org:repo`; the Hub writes `org/repo`; both name one set of
     // weights. Comparing them as strings is the defect this mirrors from the gateway's own

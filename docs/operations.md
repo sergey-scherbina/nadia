@@ -3,12 +3,17 @@
 Everything here assumes a rozum gateway serving a tool-capable model. Nothing else is
 required — no API key, no account, no network.
 
+You do not have to start it. With no URL given, nadia asks `rozum gateway ensure`, which finds
+the shared gateway (its registry, else `:8089`) or starts one — through launchd's
+`com.rozum.gateway` where `rozum service install` put it, else as a daemon of its own
+(`SPEC.md` §8 rule 7). To run one by hand:
+
 ```bash
-rozum gateway --model mlx-community:Qwen3.5-4B-MLX-4bit --port 8080
+rozum gateway --model mlx-community:Qwen3.5-4B-MLX-4bit
 ```
 
-The agent finds it through `OPENAI_BASE_URL` or `ROZUM_GATEWAY_URL` (the same URL in two
-spellings, with and without `/v1` — both are accepted), or `--gateway`. The model id comes
+A URL named explicitly always wins: `--gateway`, `OPENAI_BASE_URL` or `ROZUM_GATEWAY_URL` (the same
+URL in two spellings, with and without `/v1` — both are accepted). The model id comes
 from `NADIA_MODEL` or `--model`; a gateway serving one resident model will answer to
 whatever it is asked for.
 

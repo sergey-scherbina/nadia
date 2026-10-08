@@ -20,7 +20,7 @@ import _root_.agent.{Auth, Endpoint}
  *
  * Environment: NADIA_STATE (~/.nadia/app), NADIA_PROJECTS (roots, ':'-separated, default
  * the cwd), NADIA_TELEGRAM_OWNER (the owner's user id; the console is the owner too),
- * ROZUM_GATEWAY_URL / OPENAI_BASE_URL (localhost:8080), NADIA_MODEL, NADIA_PROVIDER
+ * ROZUM_GATEWAY_URL / OPENAI_BASE_URL (else `rozum gateway ensure`), NADIA_MODEL, NADIA_PROVIDER
  * (rozum | anthropic | openai), ANTHROPIC_API_KEY, OPENAI_API_KEY, NADIA_MAX_STEPS (24),
  * NADIA_WIRE_PORT (8791), NADIA_WIRE_TOKEN (the UI's token; loopback only when unset).
  */

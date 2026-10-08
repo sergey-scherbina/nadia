@@ -53,7 +53,7 @@ object Main:
 
   private final case class Opts(
       workspace: String = System.getProperty("user.dir"),
-      gateway: String = Gateway.urlFromEnv(),
+      gateway: String = "", // empty: not named — found (or started) through rozum where it is used
       model: String = Gateway.modelFromEnv(),
       provider: String = sys.env.getOrElse("NADIA_PROVIDER", "local"),
       region: Option[String] = None,
@@ -126,7 +126,14 @@ object Main:
             // ends up the moment it leaves a Mac — and silence there reads as "confined".
             if o.confine && confinement == Confinement.Open then
               Console.err.println(s"nadia: warning — ${confinement.describe(o.allowNet)}")
-            Provider.resolve(o.provider, o.gateway, o.model, o.region, o.project, o.keyFile) match
+            // Looked up only where a local model is talked to: `rozum gateway ensure` STARTS a
+            // gateway when none answers, which `mcp list` or a hosted provider must not do.
+            val gateway =
+              if o.gateway.nonEmpty then o.gateway
+              else if Provider.servedLocally(o.provider, o.model) && (mode == "run" || mode == "chat") then
+                Gateway.urlFromEnv()
+              else Gateway.explicit().getOrElse(Gateway.DefaultUrl)
+            Provider.resolve(o.provider, gateway, o.model, o.region, o.project, o.keyFile) match
               case Left(e) =>
                 Console.err.println(s"nadia: $e")
                 2

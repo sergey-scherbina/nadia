@@ -56,8 +56,8 @@ ui/                       the workspace program and its hosts (its own build; NA
 ```
 
 **It just works, or it says why not** (operator, 2026-10-06: «делай всё, чтобы всё просто
-работало»). No environment is required: the gateway is the one `rozum gateway status` reports
-(measured the same day — the shared gateway sat on 8089 while nadia's default said 8080, and a wrong
+работало»). No environment is required: the gateway is the one `rozum gateway ensure` finds — or
+starts, when none answers (`SPEC.md` §8 rule 7; measured the same day — the shared gateway sat on 8089 while nadia's default said 8080, and a wrong
 port is the one failure that looks exactly like an absent server), the state is `~/.nadia/app`, the
 project is the current directory, the owner is the console. Every variable in `Main`'s header is an
 override, never a requirement.
@@ -147,8 +147,9 @@ a new message, so they are not lost when the card moves on.
 **residency** and a **store** only local hosts have. The Models screen draws whatever the provider
 offers: a hosted provider shows a list with `Use`; rozum shows `Use`, `Load`, `Unload`, and the
 resident one marked. Selecting a provider (`rozum`, `anthropic`, `openai`) is an `okay-agent`
-`Provider` swap; the default is rozum at `ROZUM_GATEWAY_URL` / `OPENAI_BASE_URL`, `localhost:8080`
-when neither is set — the same resolution `scala/rozum/Gateway.scala` does today.
+`Provider` swap; the default is rozum at `ROZUM_GATEWAY_URL` / `OPENAI_BASE_URL`, else the gateway
+`rozum gateway ensure` finds or starts, else `localhost:8089` with no rozum CLI — the resolution
+`scala/rozum/Gateway.scala` does (`SPEC.md` §8 rule 7).
 
 ## Behavior
 

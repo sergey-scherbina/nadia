@@ -5,9 +5,7 @@ its own work, and stops when it is done — driving a small model through the
 [rozum](https://github.com/sergey-scherbina/rozum) gateway, with no API key and no network.
 
 ```bash
-# a gateway with a tool-capable model
-rozum gateway --model mlx-community:Qwen3.5-4B-MLX-4bit --port 8080
-
+# no gateway to start: nadia finds rozum's, or starts it (model from rozum.toml, or --model)
 # one task, headless, in the current directory
 nadia run "add a --json flag to the CLI and a test for it"
 
